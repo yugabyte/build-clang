@@ -18,8 +18,6 @@ class ClangBuilder:
 
     def parse_args(self) -> None:
         parser = argparse.ArgumentParser(description='Build Clang')
-        parser.add_argument('--remote', action='store_true',
-                            help='Run the build on a remote server. Useful during development.')
         parser.add_argument(
             '--remote_server', help='Server to build on',
             default=os.getenv('BUILD_CLANG_REMOTE_SERVER'))
@@ -28,15 +26,21 @@ class ClangBuilder:
             help='Remote directory for the build-clang project repo',
             default=os.getenv('BUILD_CLANG_REMOTE_BUILD_SCRIPTS_PATH'))
 
+        parser.add_argument(
+            '--llvm_checkout_path',
+            help='Directory where to check out the llvm-project tree')
+
         self.args = parser.parse_args()
 
     def run(self) -> None:
-        if self.args.remote:
+        if os.getenv('BUILD_CLANG_REMOTELY') == '1':
             remote_build.build_remotely(
                 remote_server=self.args.remote_server,
                 remote_build_scripts_path=self.args.remote_build_scripts_path
             )
             return
+
+        logging.info("Checking out LLVM in %s", self.args.llvm_checkout_path)
 
 
 def main() -> None:
