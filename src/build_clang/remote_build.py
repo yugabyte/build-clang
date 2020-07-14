@@ -3,6 +3,8 @@ import shlex
 import os
 import sys
 
+from typing import List
+
 from build_clang.helpers import run_cmd, ChangeDir, BUILD_CLANG_SCRIPTS_ROOT_PATH
 
 
@@ -11,7 +13,7 @@ def build_remotely(remote_server: str, remote_build_scripts_path: str) -> None:
     assert remote_build_scripts_path is not None
     assert remote_build_scripts_path.startswith('/')
 
-    def run_ssh_cmd(ssh_args):
+    def run_ssh_cmd(ssh_args: List[str]) -> None:
         run_cmd(['ssh', remote_server] + ssh_args)
 
     quoted_remote_path = shlex.quote(remote_build_scripts_path)
@@ -34,9 +36,10 @@ def build_remotely(remote_server: str, remote_build_scripts_path: str) -> None:
             '.',
             '%s:%s' % (remote_server, remote_build_scripts_path)])
 
-        run_ssh_cmd(['bash', '-c',
+        run_ssh_cmd([
+            'bash', '-c',
             shlex.quote(
-                'cd %s && bin/build_clang.sh %s' %
-                (quoted_remote_path,
-                 ' '.join(shlex.quote(arg) for arg in sys.argv[1:]))
+                'cd %s && bin/build_clang.sh %s' % (
+                    quoted_remote_path,
+                    ' '.join(shlex.quote(arg) for arg in sys.argv[1:]))
             )])
