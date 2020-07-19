@@ -87,7 +87,7 @@ class ClangBuilder:
 
         self.args = parser.parse_args()
 
-    def get_install_prefix(self, stage: int):
+    def get_install_prefix(self, stage: int) -> str:
         return os.path.join(self.get_stage_base_dir(stage), 'installed')
 
     def get_llvm_cmake_variables(
