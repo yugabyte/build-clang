@@ -8,7 +8,10 @@ from typing import List
 from build_clang.helpers import run_cmd, ChangeDir, BUILD_CLANG_SCRIPTS_ROOT_PATH
 
 
-def build_remotely(remote_server: str, remote_build_scripts_path: str) -> None:
+def build_remotely(
+        remote_server: str,
+        remote_build_scripts_path: str,
+        remote_mkdir: bool) -> None:
     assert remote_server is not None
     assert remote_build_scripts_path is not None
     assert remote_build_scripts_path.startswith('/')
@@ -17,7 +20,9 @@ def build_remotely(remote_server: str, remote_build_scripts_path: str) -> None:
         run_cmd(['ssh', remote_server] + ssh_args)
 
     quoted_remote_path = shlex.quote(remote_build_scripts_path)
-    run_ssh_cmd(['mkdir -p %s' % quoted_remote_path])
+
+    if remote_mkdir:
+        run_ssh_cmd(['mkdir -p %s' % quoted_remote_path])
 
     with ChangeDir(BUILD_CLANG_SCRIPTS_ROOT_PATH):
         excluded_files_str = subprocess.check_output(
