@@ -50,4 +50,4 @@ class FileDownloader:
                     download_path, actual_sha256, expected_sha256))
         elapsed_time_sec = time.time() - start_time_sec
         logging.info("Downloaded %s to %s in %.1f seconds", url, download_path, elapsed_time_sec)
-        return local_filename
+        return download_path

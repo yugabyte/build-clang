@@ -1,0 +1,52 @@
+https://llvm.org/docs/CMake.html
+
+Top-level LLVM CMakeLists.txt
+https://raw.githubusercontent.com/llvm/llvm-project/master/llvm/CMakeLists.txt
+
+
+LLVM_ENABLE_PROJECTS=';'.join(self.get_llvm_enabled_projects()),
+
+
+CMAKE_INSTALL_PREFIX=self.install_prefix,
+CMAKE_BUILD_TYPE='Release',
+LLVM_TARGETS_TO_BUILD='X86',
+LLVM_CCACHE_BUILD=ON,
+LLVM_CCACHE_MAXSIZE='100G',
+LLVM_CCACHE_DIR=os.path.expanduser('~/.ccache-llvm'),
+
+BUILD_SHARED_LIBS=ON,
+
+---------------------------------------------------------------------------------------------------
+Clang CMake flags
+---------------------------------------------------------------------------------------------------
+
+Clang CMakeLists.txt:
+
+https://raw.githubusercontent.com/llvm/llvm-project/master/clang/CMakeLists.txt
+
+CLANG_DEFAULT_CXX_STDLIB='libc++',
+CLANG_DEFAULT_RTLIB='compiler-rt',
+CLANG_DEFAULT_LINKER='lld',
+
+---------------------------------------------------------------------------------------------------
+libcxx CMake flags
+---------------------------------------------------------------------------------------------------
+
+https://libcxx.llvm.org/docs/BuildingLibcxx.html
+
+LIBCXX_CXX_ABI='libcxxabi',
+LIBCXX_USE_COMPILER_RT=ON,
+LIBCXX_HAS_GCC_S_LIB=OFF,
+
+---------------------------------------------------------------------------------------------------
+libcxxabi CMake flags
+---------------------------------------------------------------------------------------------------
+
+LIBCXXABI_USE_COMPILER_RT=ON
+LIBCXXABI_USE_LLVM_UNWINDER=ON
+
+---------------------------------------------------------------------------------------------------
+libunwind CMake flags
+---------------------------------------------------------------------------------------------------
+
+LIBUNWIND_USE_COMPILER_RT=ON,

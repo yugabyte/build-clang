@@ -58,6 +58,11 @@ def mkdir_p(dir_path: str) -> None:
     pathlib.Path(dir_path).mkdir(parents=True, exist_ok=True)
 
 
+def rm_rf(dir_path: str) -> None:
+    if os.path.exists(dir_path):
+        subprocess.check_call(['rm', '-rf', dir_path])
+
+
 _validate_build_clang_scripts_root_path()
 
 

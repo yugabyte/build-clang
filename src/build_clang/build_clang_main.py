@@ -9,12 +9,13 @@ from typing import Any, Optional, Dict, List
 
 from build_clang import remote_build
 from build_clang.git_helpers import git_clone_tag
-from build_clang.helpers import mkdir_p, ChangeDir, run_cmd, multiline_str_to_list
+from build_clang.helpers import mkdir_p, rm_rf, ChangeDir, run_cmd, multiline_str_to_list
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
 
 
 LLVM_REPO_URL = 'https://github.com/llvm/llvm-project.git'
+NUM_STAGES = 2
 
 
 DEVTOOLSET_ENV_VARS = set(multiline_str_to_list("""
@@ -27,16 +28,6 @@ DEVTOOLSET_ENV_VARS = set(multiline_str_to_list("""
     PKG_CONFIG_PATH
     PYTHONPATH
 """))
-
-LLVM_ENABLE_PROJECTS = multiline_str_to_list("""
-    clang
-    clang-tools-extra
-    compiler-rt
-    libcxx
-    libcxxabi
-    libunwind
-    lld
-""")
 
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
@@ -63,7 +54,13 @@ class ClangBuildConf:
     llvm_project_clone_dir: str
     cmake_executable_path: str
 
-    def __init__(self, version: str) -> None:
+    # Whether to delete CMake build directory before the build.
+    clean_build: bool
+
+    def __init__(
+            self,
+            version: str,
+            clean_build: bool = False) -> None:
         self.version = version
         self.llvm_parent_dir_for_specific_version = os.path.join(
             '/opt/yb-build/llvm',
@@ -71,6 +68,7 @@ class ClangBuildConf:
         self.llvm_project_clone_dir = os.path.join(
             self.llvm_parent_dir_for_specific_version, 'src', 'llvm-project')
         self.cmake_executable_path = get_cmake_path()
+        self.clean_build = clean_build
 
 
 class ClangBuildStage:
@@ -110,38 +108,93 @@ class ClangBuildStage:
         self.cmake_build_dir = os.path.join(self.stage_base_dir, 'build')
         self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
 
+    def get_llvm_enabled_projects(self) -> List[str]:
+        enabled_projects = multiline_str_to_list("""
+            clang
+            compiler-rt
+            libcxx
+            libcxxabi
+            libunwind
+            lld
+        """)
+        if self.stage_number > 1:
+            enabled_projects.append('clang-tools-extra')
+        return sorted(enabled_projects)
+
     def get_llvm_cmake_variables(self) -> Dict[str, str]:
         """
         See https://llvm.org/docs/CMake.html for the full list of possible options.
+
+        https://raw.githubusercontent.com/llvm/llvm-project/master/llvm/CMakeLists.txt
+
+        https://raw.githubusercontent.com/llvm/llvm-project/master/clang/CMakeLists.txt
         """
         ON = 'ON'
+        OFF = 'OFF'
         vars = dict(
-            LLVM_ENABLE_PROJECTS=';'.join(LLVM_ENABLE_PROJECTS),
+            LLVM_ENABLE_PROJECTS=';'.join(self.get_llvm_enabled_projects()),
             CMAKE_INSTALL_PREFIX=self.install_prefix,
             CMAKE_BUILD_TYPE='Release',
             LLVM_TARGETS_TO_BUILD='X86',
             LLVM_CCACHE_BUILD=ON,
             LLVM_CCACHE_MAXSIZE='100G',
             LLVM_CCACHE_DIR=os.path.expanduser('~/.ccache-llvm'),
+
+            BUILD_SHARED_LIBS=ON,
             CLANG_DEFAULT_CXX_STDLIB='libc++',
             CLANG_DEFAULT_RTLIB='compiler-rt',
-            LIBCXXABI_USE_LLVM_UNWINDER=ON
+            CLANG_DEFAULT_LINKER='lld',
+            LIBCXX_CXX_ABI='libcxxabi',
+            LIBCXX_USE_COMPILER_RT=ON,
+            LIBCXX_HAS_GCC_S_LIB=OFF,
+            LIBCXXABI_USE_COMPILER_RT=ON,
+            LIBUNWIND_USE_COMPILER_RT=ON,
+            LIBCXXABI_USE_LLVM_UNWINDER=ON,
         )
+        # if self.stage_number == 1:
+        #     vars.update(
+        #         LIBCXX_CXX_ABI='libstdc++'
+        #     )
+
+        # LIBCXX_CXX_ABI=libcxxabi
+        # LIBCXX_USE_COMPILER_RT=On
+        # LIBCXXABI_USE_LLVM_UNWINDER=On
+        # LIBCXXABI_USE_COMPILER_RT=On
+        # LIBCXX_HAS_GCC_S_LIB=Off
+        # LIBUNWIND_USE_COMPILER_RT=On
+
         if self.prev_stage is not None:
             assert self.prev_stage is not self
+            assert self.stage_number > 1
             prev_stage_install_prefix = self.prev_stage.install_prefix
+            prev_stage_cxx_include_dir = os.path.join(
+                prev_stage_install_prefix, 'include', 'c++', 'v1')
+            include_flags = '-I%s' % prev_stage_cxx_include_dir
+            prev_stage_cxx_lib_dir = os.path.join(prev_stage_install_prefix, 'lib')
+            extra_linker_flags = '-L%s' % prev_stage_cxx_lib_dir
             vars.update(
                 CMAKE_C_COMPILER=os.path.join(prev_stage_install_prefix, 'bin', 'clang'),
                 CMAKE_CXX_COMPILER=os.path.join(prev_stage_install_prefix, 'bin', 'clang++'),
                 LLVM_ENABLE_LLD=ON,
                 LLVM_ENABLE_LIBCXX=ON,
-                LLVM_ENABLE_LTO='Full',
                 LLVM_BUILD_TESTS=ON
+
+                # CMAKE_CXX_FLAGS=include_flags,
+                # CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
+                # CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags,
+                # CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags,
+                # LIBCXX_CXX_ABI_INCLUDE_PATHS=os.path.join(
+                #     prev_stage_install_prefix, 'include', 'c++', 'v1')
+                # LLVM_ENABLE_LTO='Full',
             )
 
         return vars
 
     def build(self) -> None:
+        if os.path.exists(self.cmake_build_dir) and self.build_conf.clean_build:
+            logging.info("Deleting directory: %s", self.cmake_build_dir)
+            rm_rf(self.cmake_build_dir)
+
         mkdir_p(self.cmake_build_dir)
         with ChangeDir(self.cmake_build_dir):
             cmake_vars = self.get_llvm_cmake_variables()
@@ -191,8 +244,27 @@ class ClangBuilder:
             '--clean',
             action='store_true',
             help='Clean the build directory before the build')
+        parser.add_argument(
+            '--min-stage',
+            type=int,
+            default=1,
+            help='First stage to build')
+        parser.add_argument(
+            '--max-stage',
+            type=int,
+            default=NUM_STAGES,
+            help='Last stage to build')
 
         self.args = parser.parse_args()
+        self.build_conf.clean_build = self.args.clean
+        if self.args.min_stage < 1:
+            raise ValueError("--min-stage value too low: %d" % self.args.min_stage)
+        if self.args.max_stage > NUM_STAGES:
+            raise ValueError("--max-stage value too high: %d" % self.args.max_stage)
+        if self.args.min_stage > self.args.max_stage:
+            raise ValueError(
+                "--min-stage value (%d) is greater than --max-stage value (%d)" % (
+                    self.args.min_stage, self.args.max_stage))
 
     def init_stages(self) -> None:
         prev_stage: Optional[ClangBuildStage] = None
@@ -209,7 +281,7 @@ class ClangBuilder:
                 remote_server=self.args.remote_server,
                 remote_build_scripts_path=self.args.remote_build_scripts_path,
                 # TODO: make this an argument?
-                remote_mkdir=False
+                remote_mkdir=True
             )
             return
 
@@ -225,9 +297,11 @@ class ClangBuilder:
         self.init_stages()
 
         for stage in self.stages:
-            if stage.stage_number == 1:
-                continue
-            stage.build()
+            if self.args.min_stage <= stage.stage_number <= self.args.max_stage:
+                logging.info("Building stage %d", stage.stage_number)
+                stage.build()
+            else:
+                logging.info("Skipping stage %d", stage.stage_number)
 
 
 def main() -> None:
