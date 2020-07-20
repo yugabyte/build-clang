@@ -220,7 +220,7 @@ class ClangBuildStage:
             #     '-DLLVM_CCACHE_DIR=%s' % os.path.expanduser('~/.ccache-llvm')
             # ])
 
-            for target in ['cxxabi', 'libcxx', 'compiler-rt', 'clang']:
+            for target in ['cxxabi', 'cxx', 'compiler-rt', 'clang']:
                 run_cmd(['ninja', target])
             run_cmd(['ninja'])
             run_cmd(['ninja', 'install'])
