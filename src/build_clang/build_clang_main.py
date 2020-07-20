@@ -140,21 +140,19 @@ class ClangBuildStage:
             LLVM_CCACHE_MAXSIZE='100G',
             LLVM_CCACHE_DIR=os.path.expanduser('~/.ccache-llvm'),
 
-            BUILD_SHARED_LIBS=ON,
             CLANG_DEFAULT_CXX_STDLIB='libc++',
             CLANG_DEFAULT_RTLIB='compiler-rt',
             CLANG_DEFAULT_LINKER='lld',
-            LIBCXX_CXX_ABI='libcxxabi',
-            LIBCXX_USE_COMPILER_RT=ON,
-            LIBCXX_HAS_GCC_S_LIB=OFF,
+
+            BUILD_SHARED_LIBS=ON,
+
             LIBCXXABI_USE_COMPILER_RT=ON,
-            LIBUNWIND_USE_COMPILER_RT=ON,
             LIBCXXABI_USE_LLVM_UNWINDER=ON,
+
+            LIBUNWIND_USE_COMPILER_RT=ON,
+
+            LIBCXX_USE_COMPILER_RT=ON,
         )
-        # if self.stage_number == 1:
-        #     vars.update(
-        #         LIBCXX_CXX_ABI='libstdc++'
-        #     )
 
         # LIBCXX_CXX_ABI=libcxxabi
         # LIBCXX_USE_COMPILER_RT=On
@@ -169,17 +167,22 @@ class ClangBuildStage:
             prev_stage_install_prefix = self.prev_stage.install_prefix
             prev_stage_cxx_include_dir = os.path.join(
                 prev_stage_install_prefix, 'include', 'c++', 'v1')
-            include_flags = '-I%s' % prev_stage_cxx_include_dir
             prev_stage_cxx_lib_dir = os.path.join(prev_stage_install_prefix, 'lib')
-            extra_linker_flags = '-L%s' % prev_stage_cxx_lib_dir
+
+            # extra_cxx_flags = '-I%s' % prev_stage_cxx_include_dir,
+            # extra_linker_flags = ' '.join([
+            #     '-L%s' % prev_stage_cxx_lib_dir,
+            #     '-Wl,-rpath=%s' % prev_stage_cxx_lib_dir
+            # ])
+
             vars.update(
                 CMAKE_C_COMPILER=os.path.join(prev_stage_install_prefix, 'bin', 'clang'),
                 CMAKE_CXX_COMPILER=os.path.join(prev_stage_install_prefix, 'bin', 'clang++'),
                 LLVM_ENABLE_LLD=ON,
                 LLVM_ENABLE_LIBCXX=ON,
-                LLVM_BUILD_TESTS=ON
+                LLVM_BUILD_TESTS=ON,
 
-                # CMAKE_CXX_FLAGS=include_flags,
+                # CMAKE_CXX_FLAGS_INIT=extra_cxx_flags,
                 # CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
                 # CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags,
                 # CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags,
@@ -217,6 +220,8 @@ class ClangBuildStage:
             #     '-DLLVM_CCACHE_DIR=%s' % os.path.expanduser('~/.ccache-llvm')
             # ])
 
+            for target in ['cxxabi', 'libcxx', 'compiler-rt', 'clang']:
+                run_cmd(['ninja', target])
             run_cmd(['ninja'])
             run_cmd(['ninja', 'install'])
 

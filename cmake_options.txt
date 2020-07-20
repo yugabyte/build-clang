@@ -1,3 +1,5 @@
+https://github.com/llvm/llvm-project
+
 https://llvm.org/docs/CMake.html
 
 Top-level LLVM CMakeLists.txt
@@ -32,15 +34,57 @@ CLANG_DEFAULT_LINKER='lld',
 libcxx CMake flags
 ---------------------------------------------------------------------------------------------------
 
+LIBCXX_CXX_ABI
+~~~~~~~~~~~~~~
+
+This option, if specified during stage 1 build, causes the build to fail to find cxxabi.h.
+This could be due to some concurrency issues in the build?
+
+https://raw.githubusercontent.com/llvm/llvm-project/master/libcxx/CMakeLists.txt
+
 https://libcxx.llvm.org/docs/BuildingLibcxx.html
 
 LIBCXX_CXX_ABI='libcxxabi',
+
+LIBCXX_CXX_ABI:STRING
+Values: none, libcxxabi, libcxxrt, libstdc++, libsupc++.
+Select the ABI library to build libc++ against.
+
+set(LIBCXX_CXX_ABI "default" CACHE STRING "Specify C++ ABI library to use.")
+set(CXXABIS none default libcxxabi libcxxrt libstdc++ libsupc++ vcruntime)
+set_property(CACHE LIBCXX_CXX_ABI PROPERTY STRINGS ;${CXXABIS})
+
+# Setup the default options if LIBCXX_CXX_ABI is not specified.
+if (LIBCXX_CXX_ABI STREQUAL "default")
+  if (LIBCXX_TARGETING_MSVC)
+    # FIXME: Figure out how to configure the ABI library on Windows.
+    set(LIBCXX_CXX_ABI_LIBNAME "vcruntime")
+  elseif (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+    set(LIBCXX_CXX_ABI_LIBNAME "libcxxrt")
+  elseif (NOT LIBCXX_STANDALONE_BUILD OR HAVE_LIBCXXABI)
+    set(LIBCXX_CXX_ABI_LIBNAME "libcxxabi")
+  else()
+    set(LIBCXX_CXX_ABI_LIBNAME "default")
+  endif()
+else()
+  set(LIBCXX_CXX_ABI_LIBNAME "${LIBCXX_CXX_ABI}")
+endif()
+
 LIBCXX_USE_COMPILER_RT=ON,
-LIBCXX_HAS_GCC_S_LIB=OFF,
+
+---------------------------------------------------------------------------------------------------
+
+CMake Warning:
+  Manually-specified variables were not used by the project:
+    LIBCXX_HAS_GCC_S_LIB
+
+It looks like this option might not exist.
 
 ---------------------------------------------------------------------------------------------------
 libcxxabi CMake flags
 ---------------------------------------------------------------------------------------------------
+
+https://raw.githubusercontent.com/llvm/llvm-project/master/libcxxabi/CMakeLists.txt
 
 LIBCXXABI_USE_COMPILER_RT=ON
 LIBCXXABI_USE_LLVM_UNWINDER=ON
@@ -50,3 +94,81 @@ libunwind CMake flags
 ---------------------------------------------------------------------------------------------------
 
 LIBUNWIND_USE_COMPILER_RT=ON,
+
+
+-----
+
+Flags that worked to some extent:
+
+[helpers.py:34] 2020-07-19 23:16:35,166 INFO: Running command:
+['/opt/yb-build/cmake/cmake-3.18.0-Linux-x86_64/bin/cmake', '-G',
+'Ninja', '-S', '/opt/yb-build/llvm/llvm-v10.0.0/src/llvm-project/llvm',
+'-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra;compiler-rt;libcxx;libcxxabi;libunwind;lld',
+'-DCMAKE_INSTALL_PREFIX=/opt/yb-build/llvm/llvm-v10.0.0/stage-2/installed',
+'-DCMAKE_BUILD_TYPE=Release', '-DLLVM_TARGETS_TO_BUILD=X86',
+'-DLLVM_CCACHE_BUILD=ON', '-DLLVM_CCACHE_MAXSIZE=100G',
+'-DLLVM_CCACHE_DIR=/nfusr/dev-server/mbautin2/.ccache-llvm',
+'-DCLANG_DEFAULT_CXX_STDLIB=libc++',
+'-DCLANG_DEFAULT_RTLIB=compiler-rt',
+'-DLIBCXXABI_USE_LLVM_UNWINDER=ON'] (current directory:
+/opt/yb-build/llvm/llvm-v10.0.0/stage-2/build)
+
+
+[helpers.py:34] 2020-07-19 23:41:08,794 INFO: Running command:
+['/opt/yb-build/cmake/cmake-3.18.0-Linux-x86_64/bin/cmake', '-G',
+'Ninja', '-S', '/opt/yb-build/llvm/llvm-v10.0.0/src/llvm-project/llvm',
+'-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra;compiler-rt;libcxx;libcxxabi;libunwind;lld',
+'-DCMAKE_INSTALL_PREFIX=/opt/yb-build/llvm/llvm-v10.0.0/stage-2/installed',
+'-DCMAKE_BUILD_TYPE=Release', '-DLLVM_TARGETS_TO_BUILD=X86',
+'-DLLVM_CCACHE_BUILD=ON', '-DLLVM_CCACHE_MAXSIZE=100G',
+'-DLLVM_CCACHE_DIR=/nfusr/dev-server/mbautin2/.ccache-llvm',
+'-DCLANG_DEFAULT_CXX_STDLIB=libc++',
+'-DCLANG_DEFAULT_RTLIB=compiler-rt',
+'-DLIBCXXABI_USE_LLVM_UNWINDER=ON',
+'-DCMAKE_C_COMPILER=/opt/yb-build/llvm/llvm-v10.0.0/stage-1/installed/bin/clang',
+'-DCMAKE_CXX_COMPILER=/opt/yb-build/llvm/llvm-v10.0.0/stage-1/installed/bin/clang++',
+'-DLLVM_ENABLE_LLD=ON', '-DLLVM_ENABLE_LIBCXX=ON',
+'-DLLVM_ENABLE_LTO=Full', '-DLLVM_BUILD_TESTS=ON'] (current directory:
+/opt/yb-build/llvm/llvm-v10.0.0/stage-2/build)
+
+---
+
+Warnings to investigate:
+
+CMake Warning at utils/benchmark/CMakeLists.txt:244 (message):
+  Using std::regex with exceptions disabled is not fully supported
+
+
+---
+
+Failing to use cxxabi.h
+
+FAILED: projects/libcxx/src/CMakeFiles/cxx_static.dir/new.cpp.o
+CCACHE_DIR=/nfusr/dev-server/mbautin3/.ccache-llvm CCACHE_MAXSIZE=100G
+CCACHE_CPP2=yes CCACHE_HASHDIR=yes /usr/bin/ccache
+/opt/yb-build/llvm/llvm-v10.0.0/stage-1/installed/bin/clang++ -DNDEBUG
+-D_GNU_SOURCE -D_LIBCPP_BUILDING_LIBRARY
+-D_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER -D_LIBCPP_LINK_PTHREAD_LIB
+-D_LIBCPP_LINK_RT_LIB -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS
+-D__STDC_LIMIT_MACROS -Iprojects/libcxx/src
+-I/opt/yb-build/llvm/llvm-v10.0.0/src/llvm-project/libcxx/src -Iinclude
+-I/opt/yb-build/llvm/llvm-v10.0.0/src/llvm-project/llvm/include
+-Iprojects/libcxx/include/c++build
+-I/opt/yb-build/llvm/llvm-v10.0.0/src/llvm-project/libcxx/include -fPIC
+-fvisibility-inlines-hidden -Werror=date-time
+-Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter
+-Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wno-long-long
+-Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type
+-Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wstring-conversion
+-fdiagnostics-color -ffunction-sections -fdata-sections -O3
+-DLIBCXX_BUILDING_LIBCXXABI -nostdinc++ -fvisibility-inlines-hidden
+-fvisibility=hidden -Wall -Wextra -W -Wwrite-strings
+-Wno-unused-parameter -Wno-long-long -Werror=return-type -Wextra-semi
+-Wno-user-defined-literals -Wno-covered-switch-default
+-Wno-ignored-attributes -Wno-error -std=c++14 -MD -MT
+projects/libcxx/src/CMakeFiles/cxx_static.dir/new.cpp.o -MF
+projects/libcxx/src/CMakeFiles/cxx_static.dir/new.cpp.o.d -o
+projects/libcxx/src/CMakeFiles/cxx_static.dir/new.cpp.o -c
+/opt/yb-build/llvm/llvm-v10.0.0/src/llvm-project/libcxx/src/new.cpp
+/opt/yb-build/llvm/llvm-v10.0.0/src/llvm-project/libcxx/src/new.cpp:19:13:
+fatal error: 'cxxabi.h' file not found # include <cxxabi.h> ^~~~~~~~~~
