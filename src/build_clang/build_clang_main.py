@@ -177,8 +177,7 @@ class ClangBuildStage:
         # LIBUNWIND_USE_COMPILER_RT=On
 
         if not first_stage:
-            assert self.prev_stage is not self
-            assert self.stage_number > 1
+            assert self.prev_stage is not None
             prev_stage_install_prefix = self.prev_stage.install_prefix
             prev_stage_cxx_include_dir = os.path.join(
                 prev_stage_install_prefix, 'include', 'c++', 'v1')
@@ -297,7 +296,7 @@ class ClangBuilder:
         self.build_conf = ClangBuildConf(
             version='10.0.0',
             top_dir_suffix=self.args.top_dir_suffix,
-            clean_build = self.args.clean
+            clean_build=self.args.clean
         )
 
     def init_stages(self) -> None:

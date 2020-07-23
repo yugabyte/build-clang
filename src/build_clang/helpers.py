@@ -80,7 +80,7 @@ def multiline_str_to_list(multiline_str: str) -> List[str]:
     return [s for s in lines if s]
 
 
-def log_info_heading(*args):
+def log_info_heading(*args: Any) -> None:
     logging.info("")
     logging.info("-" * 80)
     logging.info(*args)
