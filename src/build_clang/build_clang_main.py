@@ -342,6 +342,10 @@ def main() -> None:
         level=logging.INFO,
         format="[%(filename)s:%(lineno)d] %(asctime)s %(levelname)s: %(message)s")
 
+    # TODO: LTO
+    # TODO: PGO
+    # TODO: check that stage 2 build does not depend on system libstdc++ (it should use libc++).
+
     builder = ClangBuilder()
     builder.parse_args()
     builder.run()
