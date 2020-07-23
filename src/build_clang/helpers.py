@@ -78,3 +78,11 @@ def multiline_str_to_list(multiline_str: str) -> List[str]:
     lines = multiline_str.strip().split("\n")
     lines = [s.strip() for s in lines]
     return [s for s in lines if s]
+
+
+def log_info_heading(*args):
+    logging.info("")
+    logging.info("-" * 80)
+    logging.info(*args)
+    logging.info("-" * 80)
+    logging.info("")

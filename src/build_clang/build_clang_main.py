@@ -9,7 +9,14 @@ from typing import Any, Optional, Dict, List
 
 from build_clang import remote_build
 from build_clang.git_helpers import git_clone_tag
-from build_clang.helpers import mkdir_p, rm_rf, ChangeDir, run_cmd, multiline_str_to_list
+from build_clang.helpers import (
+    mkdir_p,
+    rm_rf,
+    ChangeDir,
+    run_cmd,
+    multiline_str_to_list,
+    log_info_heading,
+)
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
 from build_clang.crosstools_installer import get_crosstools_ng_dir
@@ -55,7 +62,7 @@ class ClangBuildConf:
     llvm_project_clone_dir: str
     cmake_executable_path: str
     crosstools_ng_dir: str
-    crosstools_ng_toolchain_name: str
+    target_triple: str
 
     # Whether to delete CMake build directory before the build.
     clean_build: bool
@@ -63,11 +70,12 @@ class ClangBuildConf:
     def __init__(
             self,
             version: str,
-            clean_build: bool = False) -> None:
+            clean_build: bool
+        ) -> None:
         self.version = version
         self.llvm_parent_dir_for_specific_version = os.path.join(
             '/opt/yb-build/llvm',
-            'llvm-v%s-crosstools-ng' % version)
+            'llvm-v%s-crosstools-ng%' % (version, top_dir_suffix))
         self.llvm_project_clone_dir = os.path.join(
             self.llvm_parent_dir_for_specific_version, 'src', 'llvm-project')
         self.cmake_executable_path = get_cmake_path()
@@ -108,6 +116,10 @@ class ClangBuildStage:
         self.stage_base_dir = os.path.join(
             self.build_conf.llvm_parent_dir_for_specific_version,
             'stage-%d' % self.stage_number)
+
+        # TODO mbautin: revert
+        if self.stage_number == 2:
+            self.stage_base_dir += "a"
         self.cmake_build_dir = os.path.join(self.stage_base_dir, 'build')
         self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
 
@@ -132,6 +144,11 @@ class ClangBuildStage:
 
         https://raw.githubusercontent.com/llvm/llvm-project/master/clang/CMakeLists.txt
         """
+        second_or_later_stage = self.prev_stage is not None
+        if second_or_later_stage:
+            assert self.prev_stage is not self
+            assert self.stage_number > 1
+
         ON = 'ON'
         OFF = 'OFF'
         vars = dict(
@@ -155,6 +172,8 @@ class ClangBuildStage:
             LIBUNWIND_USE_COMPILER_RT=ON,
 
             LIBCXX_USE_COMPILER_RT=ON,
+
+            CMAKE_EXPORT_COMPILE_COMMANDS=ON
         )
 
         # LIBCXX_CXX_ABI=libcxxabi
@@ -164,9 +183,7 @@ class ClangBuildStage:
         # LIBCXX_HAS_GCC_S_LIB=Off
         # LIBUNWIND_USE_COMPILER_RT=On
 
-        if self.prev_stage is not None:
-            assert self.prev_stage is not self
-            assert self.stage_number > 1
+        if second_or_later_stage:
             prev_stage_install_prefix = self.prev_stage.install_prefix
             prev_stage_cxx_include_dir = os.path.join(
                 prev_stage_install_prefix, 'include', 'c++', 'v1')
@@ -192,15 +209,12 @@ class ClangBuildStage:
 
         toolchain_path = sysroot_path = os.path.join(
             self.build_conf.crosstools_ng_dir,
-            self.build_conf.crosstools_ng_toolchain_name)
+            self.build_conf.target_triple)
         toolchain_sysroot_path = os.path.join(toolchain_path, 'sysroot')
-        # /opt/yb-build/toolchain/yb-toolchain-v20200425075614-999759775b/x86_64-unknown-linux-gnu/sysroot/usr/include
-        extra_cxx_flags = []
+
         extra_linker_flags = []
-        for include_dir in [
-            os.path.join(toolchain_sysroot_path, 'usr', 'include')
-        ]:
-            extra_cxx_flags.append('-I%s' % toolchain_sysroot_path)
+        extra_cxx_flags = []
+
         for library_dir in [
             os.path.join(toolchain_path, 'lib64'),
             os.path.join(toolchain_path, 'lib')
@@ -208,12 +222,26 @@ class ClangBuildStage:
             extra_linker_flags.append('-L%s' % library_dir)
             extra_linker_flags.append('-Wl,-rpath=%s' % library_dir)
 
+        if second_or_later_stage:
+            # extra_cxx_flags.append('--gcc-toolchain=%s' % self.build_conf.crosstools_ng_dir)
+            toolchain_sysroot_include = os.path.join(toolchain_sysroot_path, 'usr', 'include')
+            extra_cxx_flags += [
+                '-isystem', toolchain_sysroot_include,
+                # '-Xclang,-internal-isystem', '-Xclang,' + toolchain_sysroot_include,
+                # '-Xclang,-internal-externc-isystem', '-Xclang,' + toolchain_sysroot_include,
+                # '-Xclang,-nostdsysteminc'
+            ]
+            # extra_cxx_flags += ['--target=%s' % self.build_conf.target_triple]
+
         extra_linker_flags_str = ' '.join(extra_linker_flags)
         vars.update(
             CMAKE_CXX_FLAGS_INIT=' '.join(extra_cxx_flags),
             CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags_str,
             CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
-            CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags_str)
+            CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags_str
+            # CMAKE_C_COMPILER_EXTERNAL_TOOLCHAIN=toolchain_path,
+            # CMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN=toolchain_path,
+        )
 
         return vars
 
@@ -225,11 +253,15 @@ class ClangBuildStage:
         mkdir_p(self.cmake_build_dir)
         with ChangeDir(self.cmake_build_dir):
             cmake_vars = self.get_llvm_cmake_variables()
-            run_cmd([
+            cmake_args = [
                 self.build_conf.cmake_executable_path,
                 '-G', 'Ninja',
                 '-S', os.path.join(self.build_conf.llvm_project_clone_dir, 'llvm')
-            ] + cmake_vars_to_args(cmake_vars))
+            ] + cmake_vars_to_args(cmake_vars)
+            logging.info("CMake arguments (one per line):\n%s", "\n".join([
+                "    %s" % arg for arg in cmake_args
+            ]))
+            run_cmd(cmake_args)
 
             #     '-S', llvm_src_path,
             #     '-DLLVM_ENABLE_PROJECTS=%s' % ';'.join(LLVM_ENABLE_PROJECTS),
@@ -245,8 +277,12 @@ class ClangBuildStage:
             # ])
 
             for target in ['cxxabi', 'cxx', 'compiler-rt', 'clang']:
+                log_info_heading("Building target %s", target)
+
                 run_cmd(['ninja', target])
+            log_info_heading("Building all other targets")
             run_cmd(['ninja'])
+            log_info_heading("Installing")
             run_cmd(['ninja', 'install'])
 
 
@@ -257,7 +293,6 @@ class ClangBuilder:
     build_conf: ClangBuildConf
 
     def __init__(self) -> None:
-        self.build_conf = ClangBuildConf(version='10.0.0')
         self.stages = []
 
     def parse_args(self) -> None:
@@ -274,18 +309,21 @@ class ClangBuilder:
             action='store_true',
             help='Clean the build directory before the build')
         parser.add_argument(
-            '--min-stage',
+            '--min_stage',
             type=int,
             default=1,
             help='First stage to build')
         parser.add_argument(
-            '--max-stage',
+            '--max_stage',
             type=int,
             default=NUM_STAGES,
             help='Last stage to build')
+        parser.add_argument(
+            '--top_dir_suffix',
+            help='Suffix to append to the top-level directory we will use for the build')
 
         self.args = parser.parse_args()
-        self.build_conf.clean_build = self.args.clean
+
         if self.args.min_stage < 1:
             raise ValueError("--min-stage value too low: %d" % self.args.min_stage)
         if self.args.max_stage > NUM_STAGES:
@@ -294,6 +332,15 @@ class ClangBuilder:
             raise ValueError(
                 "--min-stage value (%d) is greater than --max-stage value (%d)" % (
                     self.args.min_stage, self.args.max_stage))
+
+        if self.args.top_dir_suffix and not self.args.top_dir_suffix.startswith('-'):
+            self.args.top_dir_suffix = '-%s' % self.args.top_dir_suffix
+
+        self.build_conf = ClangBuildConf(
+            version='10.0.0',
+            top_dir_suffix=self.args.top_dir_suffix,
+            clean_build = self.args.clean
+        )
 
     def init_stages(self) -> None:
         prev_stage: Optional[ClangBuildStage] = None
@@ -320,7 +367,7 @@ class ClangBuilder:
         os.environ['PATH'] = '%s:%s' % (
             os.path.join(crosstools_ng_dir, 'bin'), os.environ['PATH'])
         self.build_conf.crosstools_ng_dir = crosstools_ng_dir
-        self.build_conf.crosstools_ng_toolchain_name = 'x86_64-unknown-linux-gnu'
+        self.build_conf.target_triple = 'x86_64-unknown-linux-gnu'
 
         git_clone_tag(
             LLVM_REPO_URL,
