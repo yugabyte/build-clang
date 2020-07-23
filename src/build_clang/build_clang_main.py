@@ -15,6 +15,7 @@ from build_clang.helpers import (
     ChangeDir,
     run_cmd,
     multiline_str_to_list,
+    log_info_heading,
 )
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
