@@ -26,11 +26,7 @@ def get_crosstools_ng_dir() -> str:
 
     crosstools_ng_dir = os.path.join(TOOLCHAIN_PARENT_DIR, CROSSTOOLS_NG_DIR_NAME)
     if not os.path.isdir(crosstools_ng_dir):
-        install_crosstools_ng()
-        if not os.path.isdir(crosstools_ng_dir):
-            raise IOError(
-                "%s still does not exist after installing crosstools-ng toolchain" %
-                crosstools_ng_dir)
+        install_crosstools_ng(crosstools_ng_dir)
 
     ensure_executable_links_created(crosstools_ng_dir)
 
@@ -38,16 +34,22 @@ def get_crosstools_ng_dir() -> str:
     return crosstools_ng_dir
 
 
-def install_crosstools_ng():
+def install_crosstools_ng(dest_dir: str) -> None:
     file_downloader = FileDownloader()
     downloaded_tar_gz_path = file_downloader.download_file(CROSSTOOLS_NG_URL)
 
-    mkdir_p(TOOLCHAIN_PARENT_DIR)
-    with ChangeDir(TOOLCHAIN_PARENT_DIR):
+    parent_dir = os.path.join(dest_dir)
+    mkdir_p(parent_dir)
+    with ChangeDir(parent_dir):
         subprocess.check_call(['tar', 'xzf', downloaded_tar_gz_path])
 
+    if not os.path.isdir(dest_dir):
+        raise IOError(
+            "%s still does not exist after installing crosstools-ng toolchain" %
+            dest_dir)
 
-def ensure_executable_links_created(crosstools_ng_dir):
+
+def ensure_executable_links_created(crosstools_ng_dir: str) -> None:
     prefix = 'x86_64-unknown-linux-gnu-'
     bin_dir = os.path.join(crosstools_ng_dir, 'bin')
     # TODO: we should not need this.
