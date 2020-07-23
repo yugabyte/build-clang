@@ -9,7 +9,13 @@ from typing import Any, Optional, Dict, List
 
 from build_clang import remote_build
 from build_clang.git_helpers import git_clone_tag
-from build_clang.helpers import mkdir_p, rm_rf, ChangeDir, run_cmd, multiline_str_to_list
+from build_clang.helpers import (
+    mkdir_p,
+    rm_rf,
+    ChangeDir,
+    run_cmd,
+    multiline_str_to_list,
+)
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
 
@@ -60,11 +66,12 @@ class ClangBuildConf:
     def __init__(
             self,
             version: str,
-            clean_build: bool = False) -> None:
+            top_dir_suffix: str,
+            clean_build: bool) -> None:
         self.version = version
         self.llvm_parent_dir_for_specific_version = os.path.join(
             '/opt/yb-build/llvm',
-            'llvm-v%s' % version)
+            'llvm-v%s%s' % (version, top_dir_suffix))
         self.llvm_project_clone_dir = os.path.join(
             self.llvm_parent_dir_for_specific_version, 'src', 'llvm-project')
         self.cmake_executable_path = get_cmake_path()
@@ -129,6 +136,11 @@ class ClangBuildStage:
 
         https://raw.githubusercontent.com/llvm/llvm-project/master/clang/CMakeLists.txt
         """
+        first_stage = self.prev_stage is None
+        if not first_stage:
+            assert self.prev_stage is not self
+            assert self.stage_number > 1
+
         ON = 'ON'
         OFF = 'OFF'
         vars = dict(
@@ -152,6 +164,8 @@ class ClangBuildStage:
             LIBUNWIND_USE_COMPILER_RT=ON,
 
             LIBCXX_USE_COMPILER_RT=ON,
+
+            CMAKE_EXPORT_COMPILE_COMMANDS=ON
         )
 
         # LIBCXX_CXX_ABI=libcxxabi
@@ -161,7 +175,7 @@ class ClangBuildStage:
         # LIBCXX_HAS_GCC_S_LIB=Off
         # LIBUNWIND_USE_COMPILER_RT=On
 
-        if self.prev_stage is not None:
+        if not first_stage:
             assert self.prev_stage is not self
             assert self.stage_number > 1
             prev_stage_install_prefix = self.prev_stage.install_prefix
@@ -221,8 +235,11 @@ class ClangBuildStage:
             # ])
 
             for target in ['cxxabi', 'cxx', 'compiler-rt', 'clang']:
+                log_info_heading("Building target %s", target)
                 run_cmd(['ninja', target])
+            log_info_heading("Building all other targets")
             run_cmd(['ninja'])
+            log_info_heading("Installing")
             run_cmd(['ninja', 'install'])
 
 
@@ -233,7 +250,6 @@ class ClangBuilder:
     build_conf: ClangBuildConf
 
     def __init__(self) -> None:
-        self.build_conf = ClangBuildConf(version='10.0.0')
         self.stages = []
 
     def parse_args(self) -> None:
@@ -250,18 +266,21 @@ class ClangBuilder:
             action='store_true',
             help='Clean the build directory before the build')
         parser.add_argument(
-            '--min-stage',
+            '--min_stage',
             type=int,
             default=1,
             help='First stage to build')
         parser.add_argument(
-            '--max-stage',
+            '--max_stage',
             type=int,
             default=NUM_STAGES,
             help='Last stage to build')
+        parser.add_argument(
+            '--top_dir_suffix',
+            help='Suffix to append to the top-level directory that we will use for the build')
 
         self.args = parser.parse_args()
-        self.build_conf.clean_build = self.args.clean
+
         if self.args.min_stage < 1:
             raise ValueError("--min-stage value too low: %d" % self.args.min_stage)
         if self.args.max_stage > NUM_STAGES:
@@ -270,6 +289,15 @@ class ClangBuilder:
             raise ValueError(
                 "--min-stage value (%d) is greater than --max-stage value (%d)" % (
                     self.args.min_stage, self.args.max_stage))
+
+        if self.args.top_dir_suffix and not self.args.top_dir_suffix.startswith('-'):
+            self.args.top_dir_suffix = '-%s' % self.args.top_dir_suffix
+
+        self.build_conf = ClangBuildConf(
+            version='10.0.0',
+            top_dir_suffix=self.args.top_dir_suffix,
+            clean_build = self.args.clean
+        )
 
     def init_stages(self) -> None:
         prev_stage: Optional[ClangBuildStage] = None
