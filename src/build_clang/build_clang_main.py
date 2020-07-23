@@ -12,6 +12,7 @@ from build_clang.git_helpers import git_clone_tag
 from build_clang.helpers import mkdir_p, rm_rf, ChangeDir, run_cmd, multiline_str_to_list
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
+from build_clang.crosstools_installer import get_crosstools_ng_dir
 
 
 LLVM_REPO_URL = 'https://github.com/llvm/llvm-project.git'
@@ -53,6 +54,8 @@ class ClangBuildConf:
     llvm_parent_dir_for_specific_version: str
     llvm_project_clone_dir: str
     cmake_executable_path: str
+    crosstools_ng_dir: str
+    crosstools_ng_toolchain_name: str
 
     # Whether to delete CMake build directory before the build.
     clean_build: bool
@@ -64,7 +67,7 @@ class ClangBuildConf:
         self.version = version
         self.llvm_parent_dir_for_specific_version = os.path.join(
             '/opt/yb-build/llvm',
-            'llvm-v%s' % version)
+            'llvm-v%s-crosstools-ng' % version)
         self.llvm_project_clone_dir = os.path.join(
             self.llvm_parent_dir_for_specific_version, 'src', 'llvm-project')
         self.cmake_executable_path = get_cmake_path()
@@ -182,14 +185,35 @@ class ClangBuildStage:
                 LLVM_ENABLE_LIBCXX=ON,
                 LLVM_BUILD_TESTS=ON,
 
-                # CMAKE_CXX_FLAGS_INIT=extra_cxx_flags,
-                # CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
-                # CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags,
-                # CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags,
                 # LIBCXX_CXX_ABI_INCLUDE_PATHS=os.path.join(
                 #     prev_stage_install_prefix, 'include', 'c++', 'v1')
                 # LLVM_ENABLE_LTO='Full',
             )
+
+        toolchain_path = sysroot_path = os.path.join(
+            self.build_conf.crosstools_ng_dir,
+            self.build_conf.crosstools_ng_toolchain_name)
+        toolchain_sysroot_path = os.path.join(toolchain_path, 'sysroot')
+        # /opt/yb-build/toolchain/yb-toolchain-v20200425075614-999759775b/x86_64-unknown-linux-gnu/sysroot/usr/include
+        extra_cxx_flags = []
+        extra_linker_flags = []
+        for include_dir in [
+            os.path.join(toolchain_sysroot_path, 'usr', 'include')
+        ]:
+            extra_cxx_flags.append('-I%s' % toolchain_sysroot_path)
+        for library_dir in [
+            os.path.join(toolchain_path, 'lib64'),
+            os.path.join(toolchain_path, 'lib')
+        ]:
+            extra_linker_flags.append('-L%s' % library_dir)
+            extra_linker_flags.append('-Wl,-rpath=%s' % library_dir)
+
+        extra_linker_flags_str = ' '.join(extra_linker_flags)
+        vars.update(
+            CMAKE_CXX_FLAGS_INIT=' '.join(extra_cxx_flags),
+            CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags_str,
+            CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
+            CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags_str)
 
         return vars
 
@@ -292,7 +316,11 @@ class ClangBuilder:
 
         logging.info("Using LLVM checkout directory %s", self.build_conf.llvm_project_clone_dir)
 
-        activate_devtoolset()
+        crosstools_ng_dir = get_crosstools_ng_dir()
+        os.environ['PATH'] = '%s:%s' % (
+            os.path.join(crosstools_ng_dir, 'bin'), os.environ['PATH'])
+        self.build_conf.crosstools_ng_dir = crosstools_ng_dir
+        self.build_conf.crosstools_ng_toolchain_name = 'x86_64-unknown-linux-gnu'
 
         git_clone_tag(
             LLVM_REPO_URL,
