@@ -5,8 +5,7 @@ import os
 import subprocess
 import logging
 import json
-from datetime import datetime
-from build_clang.helpers import str_md5
+from build_clang.helpers import str_md5, get_current_timestamp_str
 from typing import List, Dict
 
 
@@ -26,23 +25,25 @@ class CompilerWrapper:
             underlying_compiler_path = os.environ['BUILD_CLANG_UNDERLYING_C_COMPILER']
             language = 'C'
 
-        args = [underlying_compiler_path] + sys.argv[1:]
-        concatenated_args_str = ' '.join(args)
+        os.environ['CCACHE_COMPILER'] = underlying_compiler_path
+        args = sys.argv[1:]
+        compiler_path_and_args = [underlying_compiler_path] + args
 
-        logging.info("Running %s compiler: %s", language, args)
+        logging.info("Running %s compiler: %s", language, compiler_path_and_args)
         compiler_invocation_file_path = os.path.join(
             os.environ['BUILD_CLANG_COMPILER_INVOCATIONS_DIR'],
             'compiler_invocation_%s_%s.json' % (
-                datetime.now().strftime('%Y-%m-%dT%H_%M_%S.%f'),
-                str_md5(concatenated_args_str)))
+                get_current_timestamp_str(),
+                str_md5(' '.join(compiler_path_and_args))))
 
         invocation_dict = {
+            'compiler': underlying_compiler_path,
             'args': args,
             'directory': os.getcwd()
         }
         with open(compiler_invocation_file_path, 'w') as invocation_file:
             json.dump(invocation_dict, invocation_file, indent=2)
-        subprocess.check_call(['ccache', 'compile'] + args)
+        subprocess.check_call(['ccache', 'compiler'] + args)
 
 
 def run_compiler_wrapper(is_cxx: bool) -> None:

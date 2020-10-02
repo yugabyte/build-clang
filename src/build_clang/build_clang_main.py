@@ -18,6 +18,7 @@ from build_clang.helpers import (
     log_info_heading,
     EnvVarContext,
     which,
+    get_current_timestamp_str,
 )
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
@@ -67,6 +68,9 @@ class ClangBuildConf:
     # Whether to delete CMake build directory before the build.
     clean_build: bool
 
+    # A timestamp string for when this confugration was created.
+    build_start_timestamp_str: str
+
     def __init__(
             self,
             version: str,
@@ -86,6 +90,7 @@ class ClangBuildConf:
             self.llvm_parent_dir_for_specific_version, 'src', 'llvm-project')
         self.cmake_executable_path = get_cmake_path()
         self.clean_build = clean_build
+        self.build_start_timestamp_str = get_current_timestamp_str()
 
 
 class ClangBuildStage:
@@ -106,6 +111,9 @@ class ClangBuildStage:
     # Installation prefix. The destination directory of "ninja install".
     install_prefix: str
 
+    # We set this when we start building the stage.
+    stage_start_timestamp_str: Optional[str]
+
     def __init__(
             self,
             build_conf: ClangBuildConf,
@@ -123,8 +131,10 @@ class ClangBuildStage:
             self.build_conf.llvm_parent_dir_for_specific_version,
             'stage-%d' % self.stage_number)
         self.cmake_build_dir = os.path.join(self.stage_base_dir, 'build')
-        self.compiler_invocations_dir = os.path.join(self.stage_base_dir, 'compiler_invocations')
+        self.compiler_invocations_top_dir = os.path.join(
+            self.stage_base_dir, 'compiler_invocations')
         self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
+        self.stage_start_timestamp_str = None
 
     def get_llvm_enabled_projects(self) -> List[str]:
         enabled_projects = multiline_str_to_list("""
@@ -215,6 +225,7 @@ class ClangBuildStage:
         return vars
 
     def build(self) -> None:
+        self.stage_start_timestamp_str = get_current_timestamp_str()
         if os.path.exists(self.cmake_build_dir) and self.build_conf.clean_build:
             logging.info("Deleting directory: %s", self.cmake_build_dir)
             rm_rf(self.cmake_build_dir)
@@ -228,13 +239,16 @@ class ClangBuildStage:
             c_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang')
             cxx_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang++')
 
-        mkdir_p(self.compiler_invocations_dir)
+        compiler_invocations_dir = os.path.join(
+            self.compiler_invocations_top_dir,
+            self.build_conf.build_start_timestamp_str)
+        mkdir_p(compiler_invocations_dir)
         mkdir_p(self.cmake_build_dir)
         with ChangeDir(self.cmake_build_dir):
             with EnvVarContext(
                     BUILD_CLANG_UNDERLYING_C_COMPILER=c_compiler,
                     BUILD_CLANG_UNDERLYING_CXX_COMPILER=cxx_compiler,
-                    BUILD_CLANG_COMPILER_INVOCATIONS_DIR=self.compiler_invocations_dir):
+                    BUILD_CLANG_COMPILER_INVOCATIONS_DIR=compiler_invocations_dir):
 
                 cmake_vars = self.get_llvm_cmake_variables()
                 run_cmd([

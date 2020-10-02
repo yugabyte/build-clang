@@ -4,6 +4,7 @@ import os
 import pathlib
 import hashlib
 from typing import List, Any, Dict, Optional
+from datetime import datetime
 
 
 BUILD_CLANG_SCRIPTS_ROOT_PATH = os.path.dirname(os.path.dirname(os.path.dirname(
@@ -129,3 +130,7 @@ def which(file_name: str) -> Optional[str]:
 
 def str_md5(s: str) -> str:
     return hashlib.md5(s.encode('utf-8')).hexdigest()
+
+
+def get_current_timestamp_str() -> str:
+    return datetime.now().strftime('%Y-%m-%dT%H_%M_%S.%f')
