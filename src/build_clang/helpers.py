@@ -3,7 +3,7 @@ import logging
 import os
 import pathlib
 import hashlib
-from typing import List, Any
+from typing import List, Any, Dict, Optional
 
 
 BUILD_CLANG_SCRIPTS_ROOT_PATH = os.path.dirname(os.path.dirname(os.path.dirname(
@@ -86,3 +86,46 @@ def log_info_heading(*args: Any) -> None:
     logging.info(*args)
     logging.info("-" * 80)
     logging.info("")
+
+
+def dict_set_or_del(d: Any, k: Any, v: Any) -> None:
+    """
+    Set the value of the given key in a dictionary to the given value, or delete it if the value
+    is None.
+    """
+    if v is None:
+        if k in d:
+            del d[k]
+    else:
+        d[k] = v
+
+
+class EnvVarContext:
+    """
+    Sets the given environment variables and restores them on exit. A None value means the variable
+    is undefined.
+    """
+    def __init__(self, **env_vars: Any) -> None:
+        self.env_vars = env_vars
+
+    def __enter__(self) -> None:
+        self.saved_env_vars = {}
+        for env_var_name, new_value in self.env_vars.items():
+            self.saved_env_vars[env_var_name] = os.environ.get(env_var_name)
+            dict_set_or_del(os.environ, env_var_name, new_value)
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        for env_var_name, saved_value in self.saved_env_vars.items():
+            dict_set_or_del(os.environ, env_var_name, saved_value)
+
+
+def which(file_name: str) -> Optional[str]:
+    for path in os.environ["PATH"].split(os.pathsep):
+        full_path = os.path.join(path, file_name)
+        if os.path.exists(full_path) and os.access(full_path, os.X_OK):
+            return full_path
+    return None
+
+
+def str_md5(s: str) -> str:
+    return hashlib.md5(s.encode('utf-8')).hexdigest()

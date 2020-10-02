@@ -16,9 +16,12 @@ from build_clang.helpers import (
     run_cmd,
     multiline_str_to_list,
     log_info_heading,
+    EnvVarContext,
+    which,
 )
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
+from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 
 LLVM_REPO_URL = 'https://github.com/llvm/llvm-project.git'
@@ -70,9 +73,15 @@ class ClangBuildConf:
             top_dir_suffix: str,
             clean_build: bool) -> None:
         self.version = version
+
+        if top_dir_suffix:
+            effective_top_dir_suffix = '-%s' % top_dir_suffix
+        else:
+            effective_top_dir_suffix = ''
+
         self.llvm_parent_dir_for_specific_version = os.path.join(
             '/opt/yb-build/llvm',
-            'llvm-v%s%s' % (version, top_dir_suffix))
+            'llvm-v%s%s' % (version, effective_top_dir_suffix))
         self.llvm_project_clone_dir = os.path.join(
             self.llvm_parent_dir_for_specific_version, 'src', 'llvm-project')
         self.cmake_executable_path = get_cmake_path()
@@ -114,6 +123,7 @@ class ClangBuildStage:
             self.build_conf.llvm_parent_dir_for_specific_version,
             'stage-%d' % self.stage_number)
         self.cmake_build_dir = os.path.join(self.stage_base_dir, 'build')
+        self.compiler_invocations_dir = os.path.join(self.stage_base_dir, 'compiler_invocations')
         self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
 
     def get_llvm_enabled_projects(self) -> List[str]:
@@ -149,12 +159,8 @@ class ClangBuildStage:
             CMAKE_INSTALL_PREFIX=self.install_prefix,
             CMAKE_BUILD_TYPE='Release',
             LLVM_TARGETS_TO_BUILD='X86',
-            LLVM_CCACHE_BUILD=ON,
-            LLVM_CCACHE_MAXSIZE='100G',
-            LLVM_CCACHE_DIR=os.path.expanduser('~/.ccache-llvm'),
 
             CLANG_DEFAULT_CXX_STDLIB='libc++',
-            CLANG_DEFAULT_RTLIB='compiler-rt',
             CLANG_DEFAULT_LINKER='lld',
 
             BUILD_SHARED_LIBS=ON,
@@ -190,11 +196,10 @@ class ClangBuildStage:
             # ])
 
             vars.update(
-                CMAKE_C_COMPILER=os.path.join(prev_stage_install_prefix, 'bin', 'clang'),
-                CMAKE_CXX_COMPILER=os.path.join(prev_stage_install_prefix, 'bin', 'clang++'),
                 LLVM_ENABLE_LLD=ON,
                 LLVM_ENABLE_LIBCXX=ON,
                 LLVM_BUILD_TESTS=ON,
+                CLANG_DEFAULT_RTLIB='compiler-rt',
 
                 # CMAKE_CXX_FLAGS_INIT=extra_cxx_flags,
                 # CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
@@ -205,6 +210,8 @@ class ClangBuildStage:
                 # LLVM_ENABLE_LTO='Full',
             )
 
+        vars.update(get_cmake_args_for_compiler_wrapper())
+
         return vars
 
     def build(self) -> None:
@@ -212,35 +219,50 @@ class ClangBuildStage:
             logging.info("Deleting directory: %s", self.cmake_build_dir)
             rm_rf(self.cmake_build_dir)
 
+        if self.stage_number == 1:
+            c_compiler = which('gcc')
+            cxx_compiler = which('g++')
+        else:
+            assert self.prev_stage is not None
+            prev_stage_install_prefix = self.prev_stage.install_prefix
+            c_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang')
+            cxx_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang++')
+
+        mkdir_p(self.compiler_invocations_dir)
         mkdir_p(self.cmake_build_dir)
         with ChangeDir(self.cmake_build_dir):
-            cmake_vars = self.get_llvm_cmake_variables()
-            run_cmd([
-                self.build_conf.cmake_executable_path,
-                '-G', 'Ninja',
-                '-S', os.path.join(self.build_conf.llvm_project_clone_dir, 'llvm')
-            ] + cmake_vars_to_args(cmake_vars))
+            with EnvVarContext(
+                    BUILD_CLANG_UNDERLYING_C_COMPILER=c_compiler,
+                    BUILD_CLANG_UNDERLYING_CXX_COMPILER=cxx_compiler,
+                    BUILD_CLANG_COMPILER_INVOCATIONS_DIR=self.compiler_invocations_dir):
 
-            #     '-S', llvm_src_path,
-            #     '-DLLVM_ENABLE_PROJECTS=%s' % ';'.join(LLVM_ENABLE_PROJECTS),
-            #     '-DCMAKE_INSTALL_PREFIX=%s' % llvm_install_prefix,
-            #     '-DCMAKE_BUILD_TYPE=Release',
-            #     '-DLLVM_TARGETS_TO_BUILD=X86',
-            #     # '-DLLVM_BUILD_TESTS=ON',
-            #     # '-DLLVM_BUILD_EXAMPLES=ON',
-            #     '-DLLVM_CCACHE_BUILD=ON',
-            #     '-DLLVM_CCACHE_MAXSIZE=100G',
-            #     '-DBOOTSTRAP_LLVM_ENABLE_LLD=ON',
-            #     '-DLLVM_CCACHE_DIR=%s' % os.path.expanduser('~/.ccache-llvm')
-            # ])
+                cmake_vars = self.get_llvm_cmake_variables()
+                run_cmd([
+                    self.build_conf.cmake_executable_path,
+                    '-G', 'Ninja',
+                    '-S', os.path.join(self.build_conf.llvm_project_clone_dir, 'llvm')
+                ] + cmake_vars_to_args(cmake_vars))
 
-            for target in ['cxxabi', 'cxx', 'compiler-rt', 'clang']:
-                log_info_heading("Building target %s", target)
-                run_cmd(['ninja', target])
-            log_info_heading("Building all other targets")
-            run_cmd(['ninja'])
-            log_info_heading("Installing")
-            run_cmd(['ninja', 'install'])
+                #     '-S', llvm_src_path,
+                #     '-DLLVM_ENABLE_PROJECTS=%s' % ';'.join(LLVM_ENABLE_PROJECTS),
+                #     '-DCMAKE_INSTALL_PREFIX=%s' % llvm_install_prefix,
+                #     '-DCMAKE_BUILD_TYPE=Release',
+                #     '-DLLVM_TARGETS_TO_BUILD=X86',
+                #     # '-DLLVM_BUILD_TESTS=ON',
+                #     # '-DLLVM_BUILD_EXAMPLES=ON',
+                #     '-DLLVM_CCACHE_BUILD=ON',
+                #     '-DLLVM_CCACHE_MAXSIZE=100G',
+                #     '-DBOOTSTRAP_LLVM_ENABLE_LLD=ON',
+                #     '-DLLVM_CCACHE_DIR=%s' % os.path.expanduser('~/.ccache-llvm')
+                # ])
+
+                for target in ['cxxabi', 'cxx', 'compiler-rt', 'clang']:
+                    log_info_heading("Building target %s", target)
+                    run_cmd(['ninja', target])
+                log_info_heading("Building all other targets")
+                run_cmd(['ninja'])
+                log_info_heading("Installing")
+                run_cmd(['ninja', 'install'])
 
 
 class ClangBuilder:
@@ -277,7 +299,8 @@ class ClangBuilder:
             help='Last stage to build')
         parser.add_argument(
             '--top_dir_suffix',
-            help='Suffix to append to the top-level directory that we will use for the build')
+            help='Suffix to append to the top-level directory that we will use for the build',
+            default='')
 
         self.args = parser.parse_args()
 
@@ -290,11 +313,8 @@ class ClangBuilder:
                 "--min-stage value (%d) is greater than --max-stage value (%d)" % (
                     self.args.min_stage, self.args.max_stage))
 
-        if self.args.top_dir_suffix and not self.args.top_dir_suffix.startswith('-'):
-            self.args.top_dir_suffix = '-%s' % self.args.top_dir_suffix
-
         self.build_conf = ClangBuildConf(
-            version='10.0.0',
+            version='10.0.1',
             top_dir_suffix=self.args.top_dir_suffix,
             clean_build=self.args.clean
         )
@@ -342,9 +362,21 @@ def main() -> None:
         level=logging.INFO,
         format="[%(filename)s:%(lineno)d] %(asctime)s %(levelname)s: %(message)s")
 
-    # TODO: LTO
-    # TODO: PGO
-    # TODO: check that stage 2 build does not depend on system libstdc++ (it should use libc++).
+    # TODO:
+    # LTO (thin, full)
+    # Save logs and timing
+    #
+    # PGO (study the existing 4-stage script)
+    #
+    # Check that stage 2 build does not depend on system libstdc++ (it should use libc++).
+    # This can be done with ldd.
+    #
+    # Run tests, including libc++ tests.
+    #
+    # Uploads to GitHub releases.
+    #
+    # Collect some info about headers used when building every C++ file (we should also do this for
+    # other builds as well).
 
     builder = ClangBuilder()
     builder.parse_args()
