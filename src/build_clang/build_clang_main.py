@@ -26,7 +26,7 @@ from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 
 LLVM_REPO_URL = 'https://github.com/llvm/llvm-project.git'
-NUM_STAGES = 2
+NUM_STAGES = 3
 
 
 DEVTOOLSET_ENV_VARS = set(multiline_str_to_list("""
@@ -210,6 +210,7 @@ class ClangBuildStage:
                 LLVM_ENABLE_LIBCXX=ON,
                 LLVM_BUILD_TESTS=ON,
                 CLANG_DEFAULT_RTLIB='compiler-rt',
+                SANITIZER_CXX_ABI='libc++'
 
                 # CMAKE_CXX_FLAGS_INIT=extra_cxx_flags,
                 # CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
@@ -335,7 +336,7 @@ class ClangBuilder:
 
     def init_stages(self) -> None:
         prev_stage: Optional[ClangBuildStage] = None
-        for stage_number in [1, 2]:
+        for stage_number in range(1, NUM_STAGES + 1):
             self.stages.append(ClangBuildStage(
                 build_conf=self.build_conf,
                 stage_number=stage_number,
