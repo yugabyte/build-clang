@@ -393,6 +393,12 @@ def main() -> None:
     # Collect some info about headers used when building every C++ file (we should also do this for
     # other builds as well).
 
+    # The Final stage install path needs to be:
+    # /opt/yb-build/llvm/llvm-v10.0.1-<suffix>-<timestamp>.
+    # The suffix can also be a timestamp.
+
+    # Also build iwyu (include-what-you-use) and ASAN/TSAN instrumented libc++.
+
     builder = ClangBuilder()
     builder.parse_args()
     builder.run()
