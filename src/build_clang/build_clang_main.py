@@ -205,17 +205,22 @@ class ClangBuildStage:
             #     '-Wl,-rpath=%s' % prev_stage_cxx_lib_dir
             # ])
 
+            # To avoid depending on libgcc.a when using Clang's runtime library compiler-rt.
+            # Otherwise building protobuf fails to find _Unwind_Resume.
+            # _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
+            extra_cxx_flags = ''
+            extra_linker_flags = '-Wl,--exclude-libs,libgcc.a'
             vars.update(
                 LLVM_ENABLE_LLD=ON,
                 LLVM_ENABLE_LIBCXX=ON,
                 LLVM_BUILD_TESTS=ON,
                 CLANG_DEFAULT_RTLIB='compiler-rt',
-                SANITIZER_CXX_ABI='libc++'
+                SANITIZER_CXX_ABI='libc++',
 
-                # CMAKE_CXX_FLAGS_INIT=extra_cxx_flags,
-                # CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
-                # CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags,
-                # CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags,
+                CMAKE_CXX_FLAGS=extra_cxx_flags,
+                CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags,
+                CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags,
+                CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
                 # LIBCXX_CXX_ABI_INCLUDE_PATHS=os.path.join(
                 #     prev_stage_install_prefix, 'include', 'c++', 'v1')
                 # LLVM_ENABLE_LTO='Full',
@@ -377,27 +382,6 @@ def main() -> None:
         level=logging.INFO,
         format="[%(filename)s:%(lineno)d] %(asctime)s %(levelname)s: %(message)s")
 
-    # TODO:
-    # LTO (thin, full)
-    # Save logs and timing
-    #
-    # PGO (study the existing 4-stage script)
-    #
-    # Check that stage 2 build does not depend on system libstdc++ (it should use libc++).
-    # This can be done with ldd.
-    #
-    # Run tests, including libc++ tests.
-    #
-    # Uploads to GitHub releases.
-    #
-    # Collect some info about headers used when building every C++ file (we should also do this for
-    # other builds as well).
-
-    # The Final stage install path needs to be:
-    # /opt/yb-build/llvm/llvm-v10.0.1-<suffix>-<timestamp>.
-    # The suffix can also be a timestamp.
-
-    # Also build iwyu (include-what-you-use) and ASAN/TSAN instrumented libc++.
 
     builder = ClangBuilder()
     builder.parse_args()

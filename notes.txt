@@ -1,0 +1,70 @@
+To avoid depending on libgcc.a when using Clang's runtime library compiler-rt we should use
+-Wl,--exclude-libs,libgcc.a when building stage 2 and onwards.
+
+Otherwise building protobuf in yugabyte-db-thirdparty fails to find _Unwind_Resume.
+_Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
+
+nm -gD /lib64/libgcc_s.so.1  | grep Unwind_Resume
+000000000000fd80 T _Unwind_Resume
+000000000000fe50 T _Unwind_Resume_or_Rethrow
+
+libgcc.a brings in the _Unwind_Resume dependency.
+
++ nm -gC /opt/rh/devtoolset-8/root/usr/lib/gcc/x86_64-redhat-linux/8/libgcc.a
++ grep Unwind
+nm: _trampoline.o: no symbols
+nm: __main.o: no symbols
+nm: _mulhc3.o: no symbols
+nm: _divhc3.o: no symbols
+                 U _Unwind_Resume
+
+This symbol is ultimately defined in libgcc_s.so.
+
++ cat /opt/rh/devtoolset-8/root/usr/lib/gcc/x86_64-redhat-linux/8/libgcc_s.so
+/* GNU ld script
+   Use the shared library, but some functions are only in
+   the static library, so try that secondarily.  */
+OUTPUT_FORMAT(elf64-x86-64)
+GROUP ( /lib64/libgcc_s.so.1 libgcc.a )
+
+---
+
+It also turns out that _Unwind_Resume is defined in LLVM-built libunwind:
+
+find . -name "*.so" -or -name "*.a" | while read f; do if nm -gD "$f" 2>/dev/null | grep "_Unwind_Resume"; then echo "$f"; fi; done
+000000000000c620 T _Unwind_Resume
+000000000000ccd0 T _Unwind_Resume_or_Rethrow
+./lib/libunwind.so
+                 U _Unwind_Resume
+./lib/libc++abi.so
+
+(This is in a build with -Wl,--exclude-libs,libgcc.a specified).
+
+---
+
+Well, there is not much difference.
+
+cd /opt/yb-build/llvm/llvm-v10.0.1-cw7/stage-3/installed;
+find . -name "*.so" -or -name "*.a" | while read f; do if nm -gD "$f" 2>/dev/null | grep "_Unwind_Resume"; then echo "$f"; fi; done
+
+000000000000c620 T _Unwind_Resume
+000000000000ccd0 T _Unwind_Resume_or_Rethrow
+./lib/libunwind.so
+                 U _Unwind_Resume
+./lib/libc++abi.so
+
+---
+
+Some libraries also depend on libgcc_s.so while they should not.
+
+find . -name "*.so" -or -name "*.a" | while read f; do
+  if ldd "$f" 2>/dev/null | grep -q "libgcc_s"; then echo "$f"; fi
+done
+
+./lib/clang/10.0.1/lib/linux/libclang_rt.ubsan_standalone-x86_64.so
+./lib/clang/10.0.1/lib/linux/libclang_rt.dyndd-x86_64.so
+./lib/clang/10.0.1/lib/linux/libclang_rt.scudo_minimal-x86_64.so
+./lib/clang/10.0.1/lib/linux/libclang_rt.scudo-x86_64.so
+./lib/clang/10.0.1/lib/linux/libclang_rt.ubsan_minimal-x86_64.so
+./lib/clang/10.0.1/lib/linux/libclang_rt.asan-x86_64.so
+./lib/clang/10.0.1/lib/linux/libclang_rt.hwasan-x86_64.so
