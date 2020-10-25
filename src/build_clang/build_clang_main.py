@@ -193,7 +193,7 @@ class ClangBuildStage:
 
             CMAKE_EXPORT_COMPILE_COMMANDS=ON,
 
-            LLVM_ENABLE_RTTI=
+            LLVM_ENABLE_RTTI=ON
         )
 
         # LIBCXX_CXX_ABI=libcxxabi
