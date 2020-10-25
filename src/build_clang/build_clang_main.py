@@ -114,11 +114,14 @@ class ClangBuildStage:
     # We set this when we start building the stage.
     stage_start_timestamp_str: Optional[str]
 
+    is_last_stage: bool
+
     def __init__(
             self,
             build_conf: ClangBuildConf,
             stage_number: int,
-            prev_stage: Optional['ClangBuildStage']) -> None:
+            prev_stage: Optional['ClangBuildStage'],
+            is_last_stage: bool) -> None:
         # Fields based directly on the parameters.
         self.build_conf = build_conf
         self.stage_number = stage_number
@@ -126,15 +129,21 @@ class ClangBuildStage:
         if self.prev_stage is not None:
             assert self.prev_stage.stage_number != self.stage_number
 
+        parent_dir_for_llvm_version = self.build_conf.llvm_parent_dir_for_specific_version
+
         # Computed fields.
         self.stage_base_dir = os.path.join(
-            self.build_conf.llvm_parent_dir_for_specific_version,
-            'stage-%d' % self.stage_number)
+            parent_dir_for_llvm_version, 'stage-%d' % self.stage_number)
         self.cmake_build_dir = os.path.join(self.stage_base_dir, 'build')
+
         self.compiler_invocations_top_dir = os.path.join(
             self.stage_base_dir, 'compiler_invocations')
-        self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
+        if is_last_stage:
+            self.install_prefix = parent_dir_for_llvm_version
+        else:
+            self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
         self.stage_start_timestamp_str = None
+        self.is_last_stage = is_last_stage
 
     def get_llvm_enabled_projects(self) -> List[str]:
         enabled_projects = multiline_str_to_list("""
@@ -182,7 +191,9 @@ class ClangBuildStage:
 
             LIBCXX_USE_COMPILER_RT=ON,
 
-            CMAKE_EXPORT_COMPILE_COMMANDS=ON
+            CMAKE_EXPORT_COMPILE_COMMANDS=ON,
+
+            LLVM_ENABLE_RTTI=
         )
 
         # LIBCXX_CXX_ABI=libcxxabi
@@ -204,6 +215,10 @@ class ClangBuildStage:
             #     '-L%s' % prev_stage_cxx_lib_dir,
             #     '-Wl,-rpath=%s' % prev_stage_cxx_lib_dir
             # ])
+
+            extra_linker_flags = ' '.join([
+                '-Wl,-rpath=%s' % os.path.join(self.install_prefix, 'lib')
+            ])
 
             # To avoid depending on libgcc.a when using Clang's runtime library compiler-rt.
             # Otherwise building protobuf fails to find _Unwind_Resume.
@@ -284,6 +299,12 @@ class ClangBuildStage:
                 log_info_heading("Installing")
                 run_cmd(['ninja', 'install'])
 
+    def check_dynamic_libraries(self) -> None:
+        for root, dirs, files in os.walk(self.install_prefix):
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                logging.info("File path: %s", file_path)
+
 
 class ClangBuilder:
     args: Any
@@ -321,6 +342,10 @@ class ClangBuilder:
             '--top_dir_suffix',
             help='Suffix to append to the top-level directory that we will use for the build',
             default='')
+        parser.add_argument(
+            '--llvm_version',
+            help='LLVM version to build, e.g. 10.0.1 or 11.0.0',
+            default='11.0.0')
 
         self.args = parser.parse_args()
 
@@ -334,7 +359,7 @@ class ClangBuilder:
                     self.args.min_stage, self.args.max_stage))
 
         self.build_conf = ClangBuildConf(
-            version='10.0.1',
+            version=self.args.llvm_version,
             top_dir_suffix=self.args.top_dir_suffix,
             clean_build=self.args.clean
         )
@@ -345,7 +370,9 @@ class ClangBuilder:
             self.stages.append(ClangBuildStage(
                 build_conf=self.build_conf,
                 stage_number=stage_number,
-                prev_stage=prev_stage))
+                prev_stage=prev_stage,
+                is_last_stage=(stage_number == NUM_STAGES)
+            ))
             prev_stage = self.stages[-1]
 
     def run(self) -> None:
@@ -381,7 +408,6 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="[%(filename)s:%(lineno)d] %(asctime)s %(levelname)s: %(message)s")
-
 
     builder = ClangBuilder()
     builder.parse_args()
