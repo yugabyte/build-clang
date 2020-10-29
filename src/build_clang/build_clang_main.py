@@ -5,7 +5,7 @@ import subprocess
 import logging
 import os
 
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Tuple
 
 from build_clang import remote_build
 from build_clang.git_helpers import git_clone_tag
@@ -61,7 +61,7 @@ def activate_devtoolset() -> None:
 
 class ClangBuildConf:
     version: str
-    llvm_parent_dir_for_specific_version: str
+    llvm_build_parent_dir: str
     llvm_project_clone_dir: str
     cmake_executable_path: str
 
@@ -71,11 +71,14 @@ class ClangBuildConf:
     # A timestamp string for when this confugration was created.
     build_start_timestamp_str: str
 
+    use_compiler_wrapper: bool
+
     def __init__(
             self,
             version: str,
             top_dir_suffix: str,
-            clean_build: bool) -> None:
+            clean_build: bool,
+            use_compiler_wrapper: bool) -> None:
         self.version = version
 
         if top_dir_suffix:
@@ -83,14 +86,18 @@ class ClangBuildConf:
         else:
             effective_top_dir_suffix = ''
 
-        self.llvm_parent_dir_for_specific_version = os.path.join(
-            '/opt/yb-build/llvm',
-            'llvm-v%s%s' % (version, effective_top_dir_suffix))
+        install_dir_basename = 'llvm-v%s%s' % (version, effective_top_dir_suffix)
+        parent_dir_for_all_versions = '/opt/yb-build/llvm'
+        self.llvm_build_parent_dir = os.path.join(
+            parent_dir_for_all_versions, install_dir_basename + '-build')
+        self.final_install_dir = os.path.join(
+            parent_dir_for_all_versions, install_dir_basename)
         self.llvm_project_clone_dir = os.path.join(
-            self.llvm_parent_dir_for_specific_version, 'src', 'llvm-project')
+            self.llvm_build_parent_dir, 'src', 'llvm-project')
         self.cmake_executable_path = get_cmake_path()
         self.clean_build = clean_build
         self.build_start_timestamp_str = get_current_timestamp_str()
+        self.use_compiler_wrapper = use_compiler_wrapper
 
 
 class ClangBuildStage:
@@ -129,7 +136,7 @@ class ClangBuildStage:
         if self.prev_stage is not None:
             assert self.prev_stage.stage_number != self.stage_number
 
-        parent_dir_for_llvm_version = self.build_conf.llvm_parent_dir_for_specific_version
+        parent_dir_for_llvm_version = self.build_conf.llvm_build_parent_dir
 
         # Computed fields.
         self.stage_base_dir = os.path.join(
@@ -139,7 +146,7 @@ class ClangBuildStage:
         self.compiler_invocations_top_dir = os.path.join(
             self.stage_base_dir, 'compiler_invocations')
         if is_last_stage:
-            self.install_prefix = parent_dir_for_llvm_version
+            self.install_prefix = self.build_conf.final_install_dir
         else:
             self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
         self.stage_start_timestamp_str = None
@@ -154,8 +161,11 @@ class ClangBuildStage:
             libunwind
             lld
         """)
-        if self.stage_number > 1:
-            enabled_projects.append('clang-tools-extra')
+        if self.is_last_stage:
+            enabled_projects.extend([
+                'clang-tools-extra',
+                'lldb'
+            ])
         return sorted(enabled_projects)
 
     def get_llvm_cmake_variables(self) -> Dict[str, str]:
@@ -193,7 +203,9 @@ class ClangBuildStage:
 
             CMAKE_EXPORT_COMPILE_COMMANDS=ON,
 
-            LLVM_ENABLE_RTTI=ON
+            LLVM_ENABLE_RTTI=ON,
+
+            CMAKE_POSITION_INDEPENDENT_CODE=ON
         )
 
         # LIBCXX_CXX_ABI=libcxxabi
@@ -223,7 +235,6 @@ class ClangBuildStage:
             # To avoid depending on libgcc.a when using Clang's runtime library compiler-rt.
             # Otherwise building protobuf fails to find _Unwind_Resume.
             # _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
-            extra_cxx_flags = ''
             extra_linker_flags = '-Wl,--exclude-libs,libgcc.a'
             vars.update(
                 LLVM_ENABLE_LLD=ON,
@@ -232,7 +243,6 @@ class ClangBuildStage:
                 CLANG_DEFAULT_RTLIB='compiler-rt',
                 SANITIZER_CXX_ABI='libc++',
 
-                CMAKE_CXX_FLAGS=extra_cxx_flags,
                 CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags,
                 CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags,
                 CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
@@ -241,16 +251,17 @@ class ClangBuildStage:
                 # LLVM_ENABLE_LTO='Full',
             )
 
-        vars.update(get_cmake_args_for_compiler_wrapper())
-
+        if self.build_conf.use_compiler_wrapper:
+            vars.update(get_cmake_args_for_compiler_wrapper())
+        else:
+            c_compiler, cxx_compiler = self.get_compilers()
+            vars.update(
+                CMAKE_C_COMPILER=c_compiler,
+                CMAKE_CXX_COMPILER=cxx_compiler
+            )
         return vars
 
-    def build(self) -> None:
-        self.stage_start_timestamp_str = get_current_timestamp_str()
-        if os.path.exists(self.cmake_build_dir) and self.build_conf.clean_build:
-            logging.info("Deleting directory: %s", self.cmake_build_dir)
-            rm_rf(self.cmake_build_dir)
-
+    def get_compilers(self) -> Tuple[str, str]:
         if self.stage_number == 1:
             c_compiler = which('gcc')
             cxx_compiler = which('g++')
@@ -259,6 +270,17 @@ class ClangBuildStage:
             prev_stage_install_prefix = self.prev_stage.install_prefix
             c_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang')
             cxx_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang++')
+        assert c_compiler is not None
+        assert cxx_compiler is not None
+        return c_compiler, cxx_compiler
+
+    def build(self) -> None:
+        self.stage_start_timestamp_str = get_current_timestamp_str()
+        if os.path.exists(self.cmake_build_dir) and self.build_conf.clean_build:
+            logging.info("Deleting directory: %s", self.cmake_build_dir)
+            rm_rf(self.cmake_build_dir)
+
+        c_compiler, cxx_compiler = self.get_compilers()
 
         compiler_invocations_dir = os.path.join(
             self.compiler_invocations_top_dir,
@@ -266,10 +288,14 @@ class ClangBuildStage:
         mkdir_p(compiler_invocations_dir)
         mkdir_p(self.cmake_build_dir)
         with ChangeDir(self.cmake_build_dir):
-            with EnvVarContext(
+            env_vars = {}
+            if self.build_conf.use_compiler_wrapper:
+                env_vars = dict(
                     BUILD_CLANG_UNDERLYING_C_COMPILER=c_compiler,
                     BUILD_CLANG_UNDERLYING_CXX_COMPILER=cxx_compiler,
-                    BUILD_CLANG_COMPILER_INVOCATIONS_DIR=compiler_invocations_dir):
+                    BUILD_CLANG_COMPILER_INVOCATIONS_DIR=compiler_invocations_dir
+                )
+            with EnvVarContext(**env_vars):
 
                 cmake_vars = self.get_llvm_cmake_variables()
                 run_cmd([
@@ -347,6 +373,11 @@ class ClangBuilder:
             help='LLVM version to build, e.g. 10.0.1 or 11.0.0',
             default='11.0.0')
 
+        parser.add_argument(
+            '--use_compiler_wrapper',
+            action='store_true',
+            help='Use a copmiler wrapper script')
+
         self.args = parser.parse_args()
 
         if self.args.min_stage < 1:
@@ -361,7 +392,8 @@ class ClangBuilder:
         self.build_conf = ClangBuildConf(
             version=self.args.llvm_version,
             top_dir_suffix=self.args.top_dir_suffix,
-            clean_build=self.args.clean
+            clean_build=self.args.clean,
+            use_compiler_wrapper=self.args.use_compiler_wrapper
         )
 
     def init_stages(self) -> None:
