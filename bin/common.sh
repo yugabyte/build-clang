@@ -1,5 +1,9 @@
 set -euo pipefail
 
+set_pythonpath() {
+  export PYTHONPATH=$build_clang_project_root/src
+}
+
 if [[ $BASH_SOURCE == $0 ]]; then
   echo "$BASH_SOURCE must be sourced, not executed" >&2
   exit 1
@@ -12,5 +16,3 @@ if [[ ! -d $build_clang_project_root/yugabyte-bash-common ||
 fi
 
 . "$build_clang_project_root/yugabyte-bash-common/src/yugabyte-bash-common.sh"
-
-export PYTHONPATH=$build_clang_project_root/src

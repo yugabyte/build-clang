@@ -5,5 +5,6 @@ set -euo pipefail
 
 yb_activate_virtualenv "$build_clang_project_root"
 
-export PYTHONPATH=$build_clang_project_root/src
+set_pythonpath
+
 "$build_clang_project_root/src/build_clang/check_python_code.py"

@@ -4,6 +4,8 @@ import argparse
 import subprocess
 import logging
 import os
+import shutil
+import time
 
 from typing import Any, Optional, Dict, List, Tuple
 
@@ -73,12 +75,15 @@ class ClangBuildConf:
 
     use_compiler_wrapper: bool
 
+    lto: bool
+
     def __init__(
             self,
             version: str,
             top_dir_suffix: str,
             clean_build: bool,
-            use_compiler_wrapper: bool) -> None:
+            use_compiler_wrapper: bool,
+            lto: bool) -> None:
         self.version = version
 
         if top_dir_suffix:
@@ -86,7 +91,7 @@ class ClangBuildConf:
         else:
             effective_top_dir_suffix = ''
 
-        install_dir_basename = 'llvm-v%s%s' % (version, effective_top_dir_suffix)
+        install_dir_basename = 'yb-llvm-v%s%s' % (version, effective_top_dir_suffix)
         parent_dir_for_all_versions = '/opt/yb-build/llvm'
         self.llvm_build_parent_dir = os.path.join(
             parent_dir_for_all_versions, install_dir_basename + '-build')
@@ -98,6 +103,12 @@ class ClangBuildConf:
         self.clean_build = clean_build
         self.build_start_timestamp_str = get_current_timestamp_str()
         self.use_compiler_wrapper = use_compiler_wrapper
+
+        # We store some information about how LLVM was built
+        self.llvm_build_info_dir = os.path.join(
+            self.final_install_dir, 'etc', 'yb-llvm-build-info')
+
+        self.lto = lto
 
 
 class ClangBuildStage:
@@ -178,8 +189,10 @@ class ClangBuildStage:
         """
         first_stage = self.prev_stage is None
         if not first_stage:
+            assert self.prev_stage is not None  # MyPy does not understand this always holds.
             assert self.prev_stage is not self
             assert self.stage_number > 1
+            assert not self.prev_stage.is_last_stage
 
         ON = 'ON'
         OFF = 'OFF'
@@ -233,8 +246,8 @@ class ClangBuildStage:
             ])
 
             # To avoid depending on libgcc.a when using Clang's runtime library compiler-rt.
-            # Otherwise building protobuf fails to find _Unwind_Resume.
-            # _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
+            # Otherwise building protobuf as part of yugabyte-db-thirdparty fails to find
+            # _Unwind_Resume. _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
             extra_linker_flags = '-Wl,--exclude-libs,libgcc.a'
             vars.update(
                 LLVM_ENABLE_LLD=ON,
@@ -248,8 +261,9 @@ class ClangBuildStage:
                 CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
                 # LIBCXX_CXX_ABI_INCLUDE_PATHS=os.path.join(
                 #     prev_stage_install_prefix, 'include', 'c++', 'v1')
-                # LLVM_ENABLE_LTO='Full',
             )
+            if self.build_conf.lto and self.is_last_stage:
+                vars.update(LLVM_ENABLE_LTO='Full')
 
         if self.build_conf.use_compiler_wrapper:
             vars.update(get_cmake_args_for_compiler_wrapper())
@@ -324,6 +338,12 @@ class ClangBuildStage:
                 run_cmd(['ninja'])
                 log_info_heading("Installing")
                 run_cmd(['ninja', 'install'])
+                if self.is_last_stage:
+                    for file_name in ['CMakeCache.txt', 'compile_commands.json']:
+                        src_path = os.path.join(self.cmake_build_dir, file_name)
+                        dst_path = os.path.join(self.build_conf.llvm_build_info_dir, file_name)
+                        logging.info("Copying file %s to %s", src_path, dst_path)
+                        shutil.copyfile(src_path, dst_path)
 
     def check_dynamic_libraries(self) -> None:
         for root, dirs, files in os.walk(self.install_prefix):
@@ -372,11 +392,18 @@ class ClangBuilder:
             '--llvm_version',
             help='LLVM version to build, e.g. 10.0.1 or 11.0.0',
             default='11.0.0')
-
+        parser.add_argument(
+            '--time_suffix',
+            help='Add a time-based suffix to the build directory',
+            action='store_true')
         parser.add_argument(
             '--use_compiler_wrapper',
             action='store_true',
-            help='Use a copmiler wrapper script')
+            help='Use a compiler wrapper script. May slow down compilation.')
+        parser.add_argument(
+            '--lto',
+            action='store_true',
+            help='Use link-time optimization for the final stage of the build.')
 
         self.args = parser.parse_args()
 
@@ -389,11 +416,18 @@ class ClangBuilder:
                 "--min-stage value (%d) is greater than --max-stage value (%d)" % (
                     self.args.min_stage, self.args.max_stage))
 
+        if self.args.time_suffix:
+            self.args.top_dir_suffix = '-'.join(item for item in [
+                str(int(time.time())),
+                self.args.top_dir_suffix
+            ] if item)
+
         self.build_conf = ClangBuildConf(
             version=self.args.llvm_version,
             top_dir_suffix=self.args.top_dir_suffix,
             clean_build=self.args.clean,
-            use_compiler_wrapper=self.args.use_compiler_wrapper
+            use_compiler_wrapper=self.args.use_compiler_wrapper,
+            lto=self.args.lto
         )
 
     def init_stages(self) -> None:
@@ -421,17 +455,24 @@ class ClangBuilder:
 
         activate_devtoolset()
 
+        llvm_build_info_dir = self.build_conf.llvm_build_info_dir
+        mkdir_p(llvm_build_info_dir)
         git_clone_tag(
             LLVM_REPO_URL,
             'llvmorg-%s' % self.build_conf.version,
-            self.build_conf.llvm_project_clone_dir)
+            self.build_conf.llvm_project_clone_dir,
+            save_git_log_to=os.path.join(llvm_build_info_dir, 'llvm_git_log.txt'))
 
         self.init_stages()
 
         for stage in self.stages:
             if self.args.min_stage <= stage.stage_number <= self.args.max_stage:
+                stage_start_time_sec = time.time()
                 logging.info("Building stage %d", stage.stage_number)
                 stage.build()
+                stage_elapsed_time_sec = time.time() - stage_start_time_sec
+                logging.info("Built stage %d in %.1f seconds",
+                             stage.stage_number, stage_elapsed_time_sec)
             else:
                 logging.info("Skipping stage %d", stage.stage_number)
 

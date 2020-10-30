@@ -3,6 +3,7 @@ import logging
 import os
 import pathlib
 import hashlib
+import time
 from typing import List, Any, Dict, Optional
 from datetime import datetime
 
@@ -134,3 +135,42 @@ def str_md5(s: str) -> str:
 
 def get_current_timestamp_str() -> str:
     return datetime.now().strftime('%Y-%m-%dT%H_%M_%S.%f')
+
+
+BASE36_ALPHABET = (
+    ''.join([chr(ord('0') + i) for i in range(0, 10)]) +
+    ''.join([chr(ord('a') + i) for i in range(0, 26)])
+)
+
+assert len(BASE36_ALPHABET) == 36
+
+
+def base36encode(number: int) -> str:
+    """
+    Converts an integer to a base36 string.
+
+    Based on:
+    https://stackoverflow.com/questions/1181919/python-base-36-encoding/1181922#1181922
+    """
+    base36 = ''
+    sign = ''
+
+    if number < 0:
+        sign = '-'
+        number = -number
+
+    if 0 <= number < len(BASE36_ALPHABET):
+        return sign + BASE36_ALPHABET[number]
+
+    while number != 0:
+        number, i = divmod(number, len(BASE36_ALPHABET))
+        base36 = BASE36_ALPHABET[i] + base36
+
+    return base36
+
+
+def base36timestamp(max_len: int = 7) -> str:
+    int_time = int(time.time())
+    s = base36encode(int_time)
+    assert len(s) <= max_len
+    return '0' * (max_len - len(s)) + s
