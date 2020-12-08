@@ -203,7 +203,7 @@ class ClangBuildStage:
             LLVM_TARGETS_TO_BUILD='X86',
 
             CLANG_DEFAULT_CXX_STDLIB='libc++',
-            CLANG_DEFAULT_LINKER='lld',
+            #CLANG_DEFAULT_LINKER='lld',
 
             BUILD_SHARED_LIBS=ON,
 
