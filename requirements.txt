@@ -2,3 +2,4 @@ mypy
 pycodestyle
 requests
 PyGithub
+codecheck
