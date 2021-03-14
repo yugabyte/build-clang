@@ -10,7 +10,7 @@ import time
 from typing import Any, Optional, Dict, List, Tuple
 
 from build_clang import remote_build
-from build_clang.git_helpers import git_clone_tag
+from build_clang.git_helpers import git_clone_tag, save_git_log_to_file
 from build_clang.helpers import (
     mkdir_p,
     rm_rf,
@@ -29,7 +29,6 @@ from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 LLVM_REPO_URL = 'https://github.com/llvm/llvm-project.git'
 NUM_STAGES = 3
-GIT_SHA1_PLACEHOLDER = 'GIT_SHA1_PLACEHOLDER'
 
 # Length of Git SHA1 prefix to be used in directory name.
 GIT_SHA1_PREFIX_LENGTH = 8
@@ -66,8 +65,11 @@ def activate_devtoolset() -> None:
 
 class ClangBuildConf:
     version: str
+    user_specified_suffix: Optional[str]
+    skip_auto_suffix: bool
     parent_dir_for_all_versions: str
-    llvm_build_parent_dir: str
+    git_sha1_prefix: Optional[str]
+
     cmake_executable_path: str
 
     # Whether to delete CMake build directory before the build.
@@ -76,20 +78,24 @@ class ClangBuildConf:
     # A timestamp string for when this confugration was created.
     build_start_timestamp_str: str
 
+    # Whether to use our custom compiler wrapper script instead of the real compiler.
     use_compiler_wrapper: bool
 
     lto: bool
-    git_sha1_prefix: Optional[str]
+
+    unix_timestamp_for_suffix: str
 
     def __init__(
             self,
             version: str,
-            user_specified_suffix: str,
+            user_specified_suffix: Optional[str],
+            skip_auto_suffix: bool,
             clean_build: bool,
             use_compiler_wrapper: bool,
             lto: bool) -> None:
         self.version = version
         self.user_specified_suffix = user_specified_suffix
+        self.skip_auto_suffix = skip_auto_suffix
         self.parent_dir_for_all_versions = '/opt/yb-build/llvm'
         self.git_sha1_prefix = None
 
@@ -101,22 +107,25 @@ class ClangBuildConf:
         # We store some information about how LLVM was built
         self.lto = lto
 
+        self.unix_timestamp_for_suffix = str(int(time.time()))
+
     def get_llvm_build_parent_dir(self) -> str:
         return os.path.join(
             self.parent_dir_for_all_versions,
             self.get_install_dir_basename() + '-build')
 
-    def get_effective_top_dir_suffix(self) -> str:
-        suffix = ''
-        for suffix_component in [self.git_sha1_prefix, self.user_specified_suffix]:
-            if suffix_component:
-                suffix += '-%s' % suffix_component
-        return suffix
-
     def get_install_dir_basename(self) -> str:
-        return 'yb-llvm-v%s%s' % (
-            self.version,
-            self.get_effective_top_dir_suffix())
+        top_dir_suffix = ''
+        if not self.skip_auto_suffix:
+            top_dir_suffix = '-' + '-'.join([
+                component for component in [
+                    self.unix_timestamp_for_suffix,
+                    self.git_sha1_prefix or 'GIT_SHA1_PLACEHOLDER',
+                    self.user_specified_suffix
+                ] if component
+            ])
+
+        return 'yb-llvm-v%s%s' % (self.version, top_dir_suffix)
 
     def get_final_install_dir(self) -> str:
         return os.path.join(
@@ -127,7 +136,7 @@ class ClangBuildConf:
         return os.path.join(self.get_final_install_dir(), 'etc', 'yb-llvm-build-info')
 
     def get_llvm_project_clone_dir(self) -> str:
-        return os.path.join(self.llvm_build_parent_dir, 'src', 'llvm-project')
+        return os.path.join(self.get_llvm_build_parent_dir(), 'src', 'llvm-project')
 
     def set_git_sha1(self, git_sha1: str) -> None:
         old_build_parent_dir = self.get_llvm_build_parent_dir()
@@ -136,6 +145,7 @@ class ClangBuildConf:
         logging.info("Git SHA1: %s", git_sha1)
         logging.info("Using git SHA1 prefix: %s", self.git_sha1_prefix)
         logging.info("Renaming %s -> %s", old_build_parent_dir, self.get_llvm_build_parent_dir())
+        os.rename(old_build_parent_dir, self.get_llvm_build_parent_dir())
 
 
 class ClangBuildStage:
@@ -174,7 +184,7 @@ class ClangBuildStage:
         if self.prev_stage is not None:
             assert self.prev_stage.stage_number != self.stage_number
 
-        parent_dir_for_llvm_version = self.build_conf.llvm_build_parent_dir
+        parent_dir_for_llvm_version = self.build_conf.get_llvm_build_parent_dir()
 
         # Computed fields.
         self.stage_base_dir = os.path.join(
@@ -411,15 +421,14 @@ class ClangBuilder:
             help='Last stage to build')
         parser.add_argument(
             '--top_dir_suffix',
-            help='Suffix to append to the top-level directory that we will use for the build. ',
-            default='')
+            help='Suffix to append to the top-level directory that we will use for the build. ')
         parser.add_argument(
             '--llvm_version',
             help='LLVM version to build, e.g. 10.0.1, 11.0.0, 11.0.1, 11.1.0',
             default='11.1.0')
         parser.add_argument(
             '--skip_auto_suffix',
-            help='Do not add automatic suffixex based on Git commit SHA1 and current time to the '
+            help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
                  'build directory and the archive name. This is useful for incremental builds when '
                  'debugging build-clang scripts.',
             action='store_true')
@@ -443,18 +452,10 @@ class ClangBuilder:
                 "--min-stage value (%d) is greater than --max-stage value (%d)" % (
                     self.args.min_stage, self.args.max_stage))
 
-        if not self.args.skip_auto_suffix:
-            self.args.top_dir_suffix = '-'.join(item for item in [
-                str(int(time.time())),
-                # This will be replaced with the actual part of the Git SHA1 once the clone is
-                # complete.
-                GIT_SHA1_PLACEHOLDER,
-                self.args.top_dir_suffix
-            ] if item)
-
         self.build_conf = ClangBuildConf(
             version=self.args.llvm_version,
             user_specified_suffix=self.args.top_dir_suffix,
+            skip_auto_suffix=self.args.skip_auto_suffix,
             clean_build=self.args.clean,
             use_compiler_wrapper=self.args.use_compiler_wrapper,
             lto=self.args.lto
@@ -489,9 +490,7 @@ class ClangBuilder:
         git_clone_tag(
             LLVM_REPO_URL,
             'llvmorg-%s' % self.build_conf.version,
-            self.build_conf.get_llvm_project_clone_dir(),
-            save_git_log_to=os.path.join(
-                self.build_conf.get_llvm_build_info_dir(), 'llvm_git_log.txt'))
+            self.build_conf.get_llvm_project_clone_dir())
 
         if not self.args.skip_auto_suffix:
             git_sha1 = subprocess.check_output(
@@ -502,6 +501,14 @@ class ClangBuilder:
             logging.info(
                 "Final LLVM code directory: %s",
                 self.build_conf.get_llvm_project_clone_dir())
+        logging.info(
+            "After all stages, LLVM will be built and installed to: %s",
+            self.build_conf.get_final_install_dir())
+
+        save_git_log_to_file(
+            self.build_conf.get_llvm_project_clone_dir(),
+            os.path.join(
+                self.build_conf.get_llvm_build_info_dir(), 'llvm_git_log.txt'))
 
         self.init_stages()
 

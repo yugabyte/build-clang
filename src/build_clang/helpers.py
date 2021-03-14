@@ -134,7 +134,7 @@ def str_md5(s: str) -> str:
 
 
 def get_current_timestamp_str() -> str:
-    return datetime.now().strftime('%Y-%m-%dT%H_%M_%S.%f')
+    return datetime.now().strftime('%Y-%m-%dT%H-%M-%S.%f')
 
 
 BASE36_ALPHABET = (
