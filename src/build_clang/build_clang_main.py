@@ -66,8 +66,8 @@ def activate_devtoolset() -> None:
 
 class ClangBuildConf:
     version: str
+    parent_dir_for_all_versions: str
     llvm_build_parent_dir: str
-    llvm_project_clone_dir: str
     cmake_executable_path: str
 
     # Whether to delete CMake build directory before the build.
@@ -79,55 +79,63 @@ class ClangBuildConf:
     use_compiler_wrapper: bool
 
     lto: bool
+    git_sha1_prefix: Optional[str]
 
     def __init__(
             self,
             version: str,
-            top_dir_suffix: str,
+            user_specified_suffix: str,
             clean_build: bool,
             use_compiler_wrapper: bool,
             lto: bool) -> None:
         self.version = version
+        self.user_specified_suffix = user_specified_suffix
+        self.parent_dir_for_all_versions = '/opt/yb-build/llvm'
+        self.git_sha1_prefix = None
 
-        if top_dir_suffix:
-            effective_top_dir_suffix = '-%s' % top_dir_suffix
-        else:
-            effective_top_dir_suffix = ''
-
-        install_dir_basename = 'yb-llvm-v%s%s' % (version, effective_top_dir_suffix)
-        parent_dir_for_all_versions = '/opt/yb-build/llvm'
-        self.llvm_build_parent_dir = os.path.join(
-            parent_dir_for_all_versions, install_dir_basename + '-build')
-        self.final_install_dir = os.path.join(
-            parent_dir_for_all_versions, install_dir_basename)
-        self.llvm_project_clone_dir = os.path.join(
-            self.llvm_build_parent_dir, 'src', 'llvm-project')
         self.cmake_executable_path = get_cmake_path()
         self.clean_build = clean_build
         self.build_start_timestamp_str = get_current_timestamp_str()
         self.use_compiler_wrapper = use_compiler_wrapper
 
         # We store some information about how LLVM was built
-        self.llvm_build_info_dir = os.path.join(
-            self.final_install_dir, 'etc', 'yb-llvm-build-info')
-
         self.lto = lto
 
-    def set_git_sha1(self, git_sha1: str) -> None:
-        old_parent_dir = self.llvm_build_parent_dir
-        self.llvm_build_parent_dir = self.llvm_build_parent_dir.replace(
-            GIT_SHA1_PLACEHOLDER, git_sha1)
-        os.rename(old_parent_dir, self.llvm_build_parent_dir)
-        logging.info(
-            "Substituting %s -> %s",
-            old_parent_dir, self.llvm_build_parent_dir)
+    def get_llvm_build_parent_dir(self) -> str:
+        return os.path.join(
+            self.parent_dir_for_all_versions,
+            self.get_install_dir_basename() + '-build')
 
-        old_llvm_project_clone_dir = self.llvm_project_clone_dir
-        self.llvm_project_clone_dir = self.llvm_project_clone_dir.replace(
-            GIT_SHA1_PLACEHOLDER, git_sha1)
-        logging.info(
-            "Substituting %s -> %s",
-            old_llvm_project_clone_dir, self.llvm_project_clone_dir)
+    def get_effective_top_dir_suffix(self) -> str:
+        suffix = ''
+        for suffix_component in [self.git_sha1_prefix, self.user_specified_suffix]:
+            if suffix_component:
+                suffix += '-%s' % suffix_component
+        return suffix
+
+    def get_install_dir_basename(self) -> str:
+        return 'yb-llvm-v%s%s' % (
+            self.version,
+            self.get_effective_top_dir_suffix())
+
+    def get_final_install_dir(self) -> str:
+        return os.path.join(
+            self.parent_dir_for_all_versions,
+            self.get_install_dir_basename())
+
+    def get_llvm_build_info_dir(self) -> str:
+        return os.path.join(self.get_final_install_dir(), 'etc', 'yb-llvm-build-info')
+
+    def get_llvm_project_clone_dir(self) -> str:
+        return os.path.join(self.llvm_build_parent_dir, 'src', 'llvm-project')
+
+    def set_git_sha1(self, git_sha1: str) -> None:
+        old_build_parent_dir = self.get_llvm_build_parent_dir()
+
+        self.git_sha1_prefix = git_sha1[:GIT_SHA1_PREFIX_LENGTH]
+        logging.info("Git SHA1: %s", git_sha1)
+        logging.info("Using git SHA1 prefix: %s", self.git_sha1_prefix)
+        logging.info("Renaming %s -> %s", old_build_parent_dir, self.get_llvm_build_parent_dir())
 
 
 class ClangBuildStage:
@@ -176,7 +184,7 @@ class ClangBuildStage:
         self.compiler_invocations_top_dir = os.path.join(
             self.stage_base_dir, 'compiler_invocations')
         if is_last_stage:
-            self.install_prefix = self.build_conf.final_install_dir
+            self.install_prefix = self.build_conf.get_final_install_dir()
         else:
             self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
         self.stage_start_timestamp_str = None
@@ -331,7 +339,7 @@ class ClangBuildStage:
                 run_cmd([
                     self.build_conf.cmake_executable_path,
                     '-G', 'Ninja',
-                    '-S', os.path.join(self.build_conf.llvm_project_clone_dir, 'llvm')
+                    '-S', os.path.join(self.build_conf.get_llvm_project_clone_dir(), 'llvm')
                 ] + cmake_vars_to_args(cmake_vars))
 
                 #     '-S', llvm_src_path,
@@ -357,7 +365,8 @@ class ClangBuildStage:
                 if self.is_last_stage:
                     for file_name in ['CMakeCache.txt', 'compile_commands.json']:
                         src_path = os.path.join(self.cmake_build_dir, file_name)
-                        dst_path = os.path.join(self.build_conf.llvm_build_info_dir, file_name)
+                        dst_path = os.path.join(
+                            self.build_conf.get_llvm_build_info_dir(), file_name)
                         logging.info("Copying file %s to %s", src_path, dst_path)
                         shutil.copyfile(src_path, dst_path)
 
@@ -445,7 +454,7 @@ class ClangBuilder:
 
         self.build_conf = ClangBuildConf(
             version=self.args.llvm_version,
-            top_dir_suffix=self.args.top_dir_suffix,
+            user_specified_suffix=self.args.top_dir_suffix,
             clean_build=self.args.clean,
             use_compiler_wrapper=self.args.use_compiler_wrapper,
             lto=self.args.lto
@@ -472,23 +481,27 @@ class ClangBuilder:
             )
             return
 
-        logging.info("Using LLVM checkout directory %s", self.build_conf.llvm_project_clone_dir)
-
         activate_devtoolset()
 
-        mkdir_p(self.build_conf.llvm_build_info_dir)
+        logging.info("Clong LLVM code to %s", self.build_conf.get_llvm_project_clone_dir())
+
+        mkdir_p(self.build_conf.get_llvm_build_info_dir())
         git_clone_tag(
             LLVM_REPO_URL,
             'llvmorg-%s' % self.build_conf.version,
-            self.build_conf.llvm_project_clone_dir,
+            self.build_conf.get_llvm_project_clone_dir(),
             save_git_log_to=os.path.join(
-                self.build_conf.llvm_build_info_dir, 'llvm_git_log.txt'))
+                self.build_conf.get_llvm_build_info_dir(), 'llvm_git_log.txt'))
 
         if not self.args.skip_auto_suffix:
             git_sha1 = subprocess.check_output(
                 ['git', 'rev-parse', 'HEAD'],
-                cwd=self.build_conf.llvm_project_clone_dir).strip().decode('utf-8')
-            self.build_conf.set_git_sha1(git_sha1[:GIT_SHA1_PREFIX_LENGTH])
+                cwd=self.build_conf.get_llvm_project_clone_dir()
+            ).strip().decode('utf-8')
+            self.build_conf.set_git_sha1(git_sha1)
+            logging.info(
+                "Final LLVM code directory: %s",
+                self.build_conf.get_llvm_project_clone_dir())
 
         self.init_stages()
 
