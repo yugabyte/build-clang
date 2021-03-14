@@ -29,7 +29,10 @@ from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 LLVM_REPO_URL = 'https://github.com/llvm/llvm-project.git'
 NUM_STAGES = 3
+GIT_SHA1_PLACEHOLDER = 'GIT_SHA1_PLACEHOLDER'
 
+# Length of Git SHA1 prefix to be used in directory name.
+GIT_SHA1_PREFIX_LENGTH = 8
 
 DEVTOOLSET_ENV_VARS = set(multiline_str_to_list("""
     INFOPATH
@@ -109,6 +112,22 @@ class ClangBuildConf:
             self.final_install_dir, 'etc', 'yb-llvm-build-info')
 
         self.lto = lto
+
+    def set_git_sha1(self, git_sha1: str) -> None:
+        old_parent_dir = self.llvm_build_parent_dir
+        self.llvm_build_parent_dir = self.llvm_build_parent_dir.replace(
+            GIT_SHA1_PLACEHOLDER, git_sha1)
+        os.rename(old_parent_dir, self.llvm_build_parent_dir)
+        logging.info(
+            "Substituting %s -> %s",
+            old_parent_dir, self.llvm_build_parent_dir)
+
+        old_llvm_project_clone_dir = self.llvm_project_clone_dir
+        self.llvm_project_clone_dir = self.llvm_project_clone_dir.replace(
+            GIT_SHA1_PLACEHOLDER, git_sha1)
+        logging.info(
+            "Substituting %s -> %s",
+            old_llvm_project_clone_dir, self.llvm_project_clone_dir)
 
 
 class ClangBuildStage:
@@ -383,15 +402,17 @@ class ClangBuilder:
             help='Last stage to build')
         parser.add_argument(
             '--top_dir_suffix',
-            help='Suffix to append to the top-level directory that we will use for the build',
+            help='Suffix to append to the top-level directory that we will use for the build. ',
             default='')
         parser.add_argument(
             '--llvm_version',
             help='LLVM version to build, e.g. 10.0.1, 11.0.0, 11.0.1, 11.1.0',
             default='11.1.0')
         parser.add_argument(
-            '--time_suffix',
-            help='Add a time-based suffix to the build directory',
+            '--skip_auto_suffix',
+            help='Do not add automatic suffixex based on Git commit SHA1 and current time to the '
+                 'build directory and the archive name. This is useful for incremental builds when '
+                 'debugging build-clang scripts.',
             action='store_true')
         parser.add_argument(
             '--use_compiler_wrapper',
@@ -413,9 +434,12 @@ class ClangBuilder:
                 "--min-stage value (%d) is greater than --max-stage value (%d)" % (
                     self.args.min_stage, self.args.max_stage))
 
-        if self.args.time_suffix:
+        if not self.args.skip_auto_suffix:
             self.args.top_dir_suffix = '-'.join(item for item in [
                 str(int(time.time())),
+                # This will be replaced with the actual part of the Git SHA1 once the clone is
+                # complete.
+                GIT_SHA1_PLACEHOLDER,
                 self.args.top_dir_suffix
             ] if item)
 
@@ -452,13 +476,19 @@ class ClangBuilder:
 
         activate_devtoolset()
 
-        llvm_build_info_dir = self.build_conf.llvm_build_info_dir
-        mkdir_p(llvm_build_info_dir)
+        mkdir_p(self.build_conf.llvm_build_info_dir)
         git_clone_tag(
             LLVM_REPO_URL,
             'llvmorg-%s' % self.build_conf.version,
             self.build_conf.llvm_project_clone_dir,
-            save_git_log_to=os.path.join(llvm_build_info_dir, 'llvm_git_log.txt'))
+            save_git_log_to=os.path.join(
+                self.build_conf.llvm_build_info_dir, 'llvm_git_log.txt'))
+
+        if not self.args.skip_auto_suffix:
+            git_sha1 = subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'],
+                cwd=self.build_conf.llvm_project_clone_dir).strip().decode('utf-8')
+            self.build_conf.set_git_sha1(git_sha1[:GIT_SHA1_PREFIX_LENGTH])
 
         self.init_stages()
 
