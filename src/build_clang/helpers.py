@@ -4,6 +4,8 @@ import os
 import pathlib
 import hashlib
 import time
+import shlex
+
 from typing import List, Any, Dict, Optional
 from datetime import datetime
 
@@ -31,10 +33,14 @@ def normalize_cmd_arg(arg: Any) -> Any:
     return arg
 
 
-def run_cmd(args: List[Any]) -> None:
+def run_cmd(args: List[Any], cwd: Optional[str] = None) -> None:
     args = [normalize_cmd_arg(arg) for arg in args]
-    logging.info("Running command: %s (current directory: %s)", args, os.getcwd())
-    subprocess.check_call(args)
+    effective_directory = cwd or os.getcwd()
+    logging.info(
+        "Running command: %s (in directory: %s)",
+        ' '.join([shlex.quote(arg) for arg in args]),
+        effective_directory)
+    subprocess.check_call(args, cwd=effective_directory)
 
 
 # from https://stackoverflow.com/questions/431684/how-do-i-change-the-working-directory-in-python

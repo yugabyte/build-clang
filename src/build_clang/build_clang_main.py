@@ -10,7 +10,11 @@ import time
 from typing import Any, Optional, Dict, List, Tuple
 
 from build_clang import remote_build
-from build_clang.git_helpers import git_clone_tag, save_git_log_to_file
+from build_clang.git_helpers import (
+    git_clone_tag,
+    save_git_log_to_file,
+    get_current_git_sha1
+)
 from build_clang.helpers import (
     mkdir_p,
     rm_rf,
@@ -21,6 +25,7 @@ from build_clang.helpers import (
     EnvVarContext,
     which,
     get_current_timestamp_str,
+    BUILD_CLANG_SCRIPTS_ROOT_PATH,
 )
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
@@ -43,6 +48,8 @@ DEVTOOLSET_ENV_VARS = set(multiline_str_to_list("""
     PKG_CONFIG_PATH
     PYTHONPATH
 """))
+
+YB_LLVM_ARCHIVE_NAME_PREFIX = 'yb-llvm-'
 
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
@@ -114,7 +121,7 @@ class ClangBuildConf:
             self.parent_dir_for_all_versions,
             self.get_install_dir_basename() + '-build')
 
-    def get_install_dir_basename(self) -> str:
+    def get_tag(self) -> str:
         top_dir_suffix = ''
         if not self.skip_auto_suffix:
             top_dir_suffix = '-' + '-'.join([
@@ -125,7 +132,10 @@ class ClangBuildConf:
                 ] if component
             ])
 
-        return 'yb-llvm-v%s%s' % (self.version, top_dir_suffix)
+        return 'v%s%s' % (self.version, top_dir_suffix)
+
+    def get_install_dir_basename(self) -> str:
+        return YB_LLVM_ARCHIVE_NAME_PREFIX + self.get_tag()
 
     def get_final_install_dir(self) -> str:
         return os.path.join(
@@ -440,6 +450,14 @@ class ClangBuilder:
             '--lto',
             action='store_true',
             help='Use link-time optimization for the final stage of the build.')
+        parser.add_argument(
+            '--upload_earlier_build',
+            help='Upload earlier build specified by this path. This is useful for debugging '
+                 'release upload to GitHub.')
+        parser.add_argument(
+            '--reuse_tarball',
+            help='Reuse existing tarball (for use with --upload_earlier_build).',
+            action='store_true')
 
         self.args = parser.parse_args()
 
@@ -484,44 +502,87 @@ class ClangBuilder:
 
         activate_devtoolset()
 
-        logging.info("Clong LLVM code to %s", self.build_conf.get_llvm_project_clone_dir())
+        if not self.args.upload_earlier_build:
+            logging.info("Clong LLVM code to %s", self.build_conf.get_llvm_project_clone_dir())
 
-        mkdir_p(self.build_conf.get_llvm_build_info_dir())
-        git_clone_tag(
-            LLVM_REPO_URL,
-            'llvmorg-%s' % self.build_conf.version,
-            self.build_conf.get_llvm_project_clone_dir())
-
-        if not self.args.skip_auto_suffix:
-            git_sha1 = subprocess.check_output(
-                ['git', 'rev-parse', 'HEAD'],
-                cwd=self.build_conf.get_llvm_project_clone_dir()
-            ).strip().decode('utf-8')
-            self.build_conf.set_git_sha1(git_sha1)
-            logging.info(
-                "Final LLVM code directory: %s",
+            mkdir_p(self.build_conf.get_llvm_build_info_dir())
+            git_clone_tag(
+                LLVM_REPO_URL,
+                'llvmorg-%s' % self.build_conf.version,
                 self.build_conf.get_llvm_project_clone_dir())
-        logging.info(
-            "After all stages, LLVM will be built and installed to: %s",
-            self.build_conf.get_final_install_dir())
 
-        save_git_log_to_file(
-            self.build_conf.get_llvm_project_clone_dir(),
-            os.path.join(
-                self.build_conf.get_llvm_build_info_dir(), 'llvm_git_log.txt'))
+            if not self.args.skip_auto_suffix:
+                git_sha1 = get_current_git_sha1(self.build_conf.get_llvm_project_clone_dir())
+                self.build_conf.set_git_sha1(git_sha1)
+                logging.info(
+                    "Final LLVM code directory: %s",
+                    self.build_conf.get_llvm_project_clone_dir())
+            logging.info(
+                "After all stages, LLVM will be built and installed to: %s",
+                self.build_conf.get_final_install_dir())
 
-        self.init_stages()
+            save_git_log_to_file(
+                self.build_conf.get_llvm_project_clone_dir(),
+                os.path.join(
+                    self.build_conf.get_llvm_build_info_dir(), 'llvm_git_log.txt'))
 
-        for stage in self.stages:
-            if self.args.min_stage <= stage.stage_number <= self.args.max_stage:
-                stage_start_time_sec = time.time()
-                logging.info("Building stage %d", stage.stage_number)
-                stage.build()
-                stage_elapsed_time_sec = time.time() - stage_start_time_sec
-                logging.info("Built stage %d in %.1f seconds",
-                             stage.stage_number, stage_elapsed_time_sec)
-            else:
-                logging.info("Skipping stage %d", stage.stage_number)
+            self.init_stages()
+
+            for stage in self.stages:
+                if self.args.min_stage <= stage.stage_number <= self.args.max_stage:
+                    stage_start_time_sec = time.time()
+                    logging.info("Building stage %d", stage.stage_number)
+                    stage.build()
+                    stage_elapsed_time_sec = time.time() - stage_start_time_sec
+                    logging.info("Built stage %d in %.1f seconds",
+                                 stage.stage_number, stage_elapsed_time_sec)
+                else:
+                    logging.info("Skipping stage %d", stage.stage_number)
+
+        final_install_dir = (
+            self.args.upload_earlier_build or self.build_conf.get_final_install_dir())
+        final_install_dir_basename = os.path.basename(final_install_dir)
+        final_install_parent_dir = os.path.dirname(final_install_dir)
+        archive_name = final_install_dir_basename + '.tar.gz'
+        archive_path = os.path.join(final_install_parent_dir, archive_name)
+
+        if not self.args.reuse_tarball or not os.path.exists(archive_path):
+            if os.path.exists(archive_path):
+                logging.info("Removing existing archive %s", archive_path)
+                try:
+                    os.remove(archive_path)
+                except OSError:
+                    pass
+
+            run_cmd(
+                ['tar', 'czf', archive_name, final_install_dir_basename],
+                cwd=final_install_parent_dir,
+            )
+
+        sha256sum_output = subprocess.check_output(
+            ['sha256sum', archive_path]).decode('utf-8')
+        sha256sum_file_path = archive_path + '.sha256'
+        with open(sha256sum_file_path, 'w') as sha256sum_file:
+            sha256sum_file.write(sha256sum_output)
+
+        assert final_install_dir_basename.startswith(YB_LLVM_ARCHIVE_NAME_PREFIX)
+        tag = final_install_dir_basename[len(YB_LLVM_ARCHIVE_NAME_PREFIX):]
+
+        github_token_path = os.path.expanduser('~/.github-token')
+        if os.path.exists(github_token_path) and not os.getenv('GITHUB_TOKEN'):
+            logging.info("Reading GitHub token from %s", github_token_path)
+            with open(github_token_path) as github_token_file:
+                os.environ['GITHUB_TOKEN'] = github_token_file.read().strip()
+
+        run_cmd([
+            'hub',
+            'release',
+            'create', tag,
+            '-m', 'Release %s' % tag,
+            '-a', archive_path,
+            '-a', sha256sum_file_path,
+            # '-t', ...
+        ], cwd=BUILD_CLANG_SCRIPTS_ROOT_PATH)
 
 
 def main() -> None:

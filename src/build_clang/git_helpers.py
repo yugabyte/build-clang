@@ -20,6 +20,13 @@ def git_clone_tag(
         run_cmd(['git', 'clone', repo_url, '--branch', tag, '--depth', CLONE_DEPTH, dest_path])
 
 
+def get_current_git_sha1(repo_path: str) -> str:
+    return subprocess.check_output(
+        ['git', 'rev-parse', 'HEAD'],
+        cwd=repo_path
+    ).strip().decode('utf-8')
+
+
 def save_git_log_to_file(git_repo_dir: str, dest_file_path: str) -> None:
     dest_file_path = os.path.abspath(dest_file_path)
 
