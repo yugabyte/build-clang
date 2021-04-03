@@ -99,7 +99,8 @@ class ClangBuildConf:
             skip_auto_suffix: bool,
             clean_build: bool,
             use_compiler_wrapper: bool,
-            lto: bool) -> None:
+            lto: bool,
+            use_compiler_rt: bool) -> None:
         self.version = version
         self.user_specified_suffix = user_specified_suffix
         self.skip_auto_suffix = skip_auto_suffix
@@ -110,6 +111,7 @@ class ClangBuildConf:
         self.clean_build = clean_build
         self.build_start_timestamp_str = get_current_timestamp_str()
         self.use_compiler_wrapper = use_compiler_wrapper
+        self.use_compiler_rt = use_compiler_rt
 
         # We store some information about how LLVM was built
         self.lto = lto
@@ -243,6 +245,7 @@ class ClangBuildStage:
 
         ON = 'ON'
         OFF = 'OFF'
+        use_compiler_rt = ON if self.build_conf.use_compiler_rt else OFF
         vars = dict(
             LLVM_ENABLE_PROJECTS=';'.join(self.get_llvm_enabled_projects()),
             CMAKE_INSTALL_PREFIX=self.install_prefix,
@@ -253,12 +256,12 @@ class ClangBuildStage:
 
             BUILD_SHARED_LIBS=ON,
 
-            LIBCXXABI_USE_COMPILER_RT=ON,
+            LIBCXXABI_USE_COMPILER_RT=use_compiler_rt,
             LIBCXXABI_USE_LLVM_UNWINDER=ON,
 
-            LIBUNWIND_USE_COMPILER_RT=ON,
+            LIBUNWIND_USE_COMPILER_RT=use_compiler_rt,
 
-            LIBCXX_USE_COMPILER_RT=ON,
+            LIBCXX_USE_COMPILER_RT=use_compiler_rt,
 
             CMAKE_EXPORT_COMPILE_COMMANDS=ON,
 
@@ -458,6 +461,10 @@ class ClangBuilder:
             '--reuse_tarball',
             help='Reuse existing tarball (for use with --upload_earlier_build).',
             action='store_true')
+        parser.add_argument(
+            '--use_compiler_rt',
+            help='Use compiler-rt runtime',
+            action='store_true')
 
         self.args = parser.parse_args()
 
@@ -476,7 +483,8 @@ class ClangBuilder:
             skip_auto_suffix=self.args.skip_auto_suffix,
             clean_build=self.args.clean,
             use_compiler_wrapper=self.args.use_compiler_wrapper,
-            lto=self.args.lto
+            lto=self.args.lto,
+            use_compiler_rt=self.args.use_compiler_rt
         )
 
     def init_stages(self) -> None:
