@@ -224,7 +224,7 @@ class ClangBuildStage:
         if self.is_last_stage:
             enabled_projects.extend([
                 'clang-tools-extra',
-                'lldb'
+                # 'lldb'
             ])
         return sorted(enabled_projects)
 
