@@ -437,7 +437,7 @@ class ClangBuilder:
             help='Suffix to append to the top-level directory that we will use for the build. ')
         parser.add_argument(
             '--llvm_version',
-            help='LLVM version to build, e.g. 10.0.1, 11.0.0, 11.0.1, 11.1.0',
+            help='LLVM version to build, e.g. 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0',
             default='11.1.0')
         parser.add_argument(
             '--skip_auto_suffix',
