@@ -51,6 +51,10 @@ DEVTOOLSET_ENV_VARS = set(multiline_str_to_list("""
 
 YB_LLVM_ARCHIVE_NAME_PREFIX = 'yb-llvm-'
 
+BUILD_DIR_SUFFIX = 'build'
+NAME_COMPONENT_SEPARATOR = '-'
+BUILD_DIR_SUFFIX_WITH_SEPARATOR = NAME_COMPONENT_SEPARATOR + BUILD_DIR_SUFFIX
+
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
     return ['-D%s=%s' % (k, v) for (k, v) in vars.items()]
@@ -90,7 +94,9 @@ class ClangBuildConf:
 
     lto: bool
 
-    unix_timestamp_for_suffix: str
+    unix_timestamp_for_suffix: Optional[str]
+
+    tag_override: Optional[str]
 
     def __init__(
             self,
@@ -100,7 +106,8 @@ class ClangBuildConf:
             clean_build: bool,
             use_compiler_wrapper: bool,
             lto: bool,
-            use_compiler_rt: bool) -> None:
+            use_compiler_rt: bool,
+            existing_build_dir: Optional[str]) -> None:
         self.version = version
         self.user_specified_suffix = user_specified_suffix
         self.skip_auto_suffix = skip_auto_suffix
@@ -116,17 +123,38 @@ class ClangBuildConf:
         # We store some information about how LLVM was built
         self.lto = lto
 
-        self.unix_timestamp_for_suffix = str(int(time.time()))
+        self.unix_timestamp_for_suffix = None
+
+        self.existing_build_dir = existing_build_dir
+        if self.existing_build_dir:
+            build_dir_basename = os.path.basename(self.existing_build_dir)
+            invalid_msg_prefix = \
+                f"Invalid existing build directory basename: '{build_dir_basename}', "
+            if not build_dir_basename.endswith(BUILD_DIR_SUFFIX_WITH_SEPARATOR):
+                raise ValueError(
+                    invalid_msg_prefix +
+                    f"does not end with '{BUILD_DIR_SUFFIX_WITH_SEPARATOR}'.")
+            if not build_dir_basename.startswith(YB_LLVM_ARCHIVE_NAME_PREFIX):
+                raise ValueError(
+                    invalid_msg_prefix +
+                    f"does not start with '{YB_LLVM_ARCHIVE_NAME_PREFIX}'.")
+            self.tag_override = build_dir_basename[
+                len(YB_LLVM_ARCHIVE_NAME_PREFIX):-len(BUILD_DIR_SUFFIX_WITH_SEPARATOR)]
+        else:
+            self.unix_timestamp_for_suffix = str(int(time.time()))
 
     def get_llvm_build_parent_dir(self) -> str:
         return os.path.join(
             self.parent_dir_for_all_versions,
-            self.get_install_dir_basename() + '-build')
+            self.get_install_dir_basename() + BUILD_DIR_SUFFIX_WITH_SEPARATOR)
 
     def get_tag(self) -> str:
+        if self.tag_override:
+            return self.tag_override
+
         top_dir_suffix = ''
         if not self.skip_auto_suffix:
-            top_dir_suffix = '-' + '-'.join([
+            top_dir_suffix = NAME_COMPONENT_SEPARATOR + NAME_COMPONENT_SEPARATOR.join([
                 component for component in [
                     self.unix_timestamp_for_suffix,
                     self.git_sha1_prefix or 'GIT_SHA1_PLACEHOLDER',
@@ -386,7 +414,7 @@ class ClangBuildStage:
                     run_cmd(['ninja', target])
                 log_info_heading("Building all other targets")
                 run_cmd(['ninja'])
-                if not self.is_first_stage():
+                if self.is_last_stage:
                     for target in ['clangd', 'clangd-indexer']:
                         log_info_heading("Building target %s", target)
                         run_cmd(['ninja', target])
@@ -446,7 +474,7 @@ class ClangBuilder:
         parser.add_argument(
             '--llvm_version',
             help='LLVM version to build, e.g. 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0',
-            default='11.1.0')
+            default='12.0.0')
         parser.add_argument(
             '--skip_auto_suffix',
             help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
@@ -473,6 +501,11 @@ class ClangBuilder:
             '--use_compiler_rt',
             help='Use compiler-rt runtime',
             action='store_true')
+        parser.add_argument(
+            '--existing_build_dir',
+            help='Continue build in an existing directory, e.g. '
+                 '/opt/yb-build/llvm/yb-llvm-v12.0.0-1618898532-d28af7c6-build. '
+                 'This helps when developing these scripts to avoid rebuilding from scratch.')
 
         self.args = parser.parse_args()
 
@@ -485,6 +518,10 @@ class ClangBuilder:
                 "--min-stage value (%d) is greater than --max-stage value (%d)" % (
                     self.args.min_stage, self.args.max_stage))
 
+        if self.args.existing_build_dir:
+            logging.info("Assuming --skip_auto_suffix because --existing_build_dir is set")
+            self.args.skip_auto_suffix = True
+
         self.build_conf = ClangBuildConf(
             version=self.args.llvm_version,
             user_specified_suffix=self.args.top_dir_suffix,
@@ -492,7 +529,8 @@ class ClangBuilder:
             clean_build=self.args.clean,
             use_compiler_wrapper=self.args.use_compiler_wrapper,
             lto=self.args.lto,
-            use_compiler_rt=self.args.use_compiler_rt
+            use_compiler_rt=self.args.use_compiler_rt,
+            existing_build_dir=self.args.existing_build_dir
         )
 
     def init_stages(self) -> None:
@@ -517,15 +555,26 @@ class ClangBuilder:
             return
 
         activate_devtoolset()
+        if (self.args.existing_build_dir is not None and
+                self.build_conf.get_llvm_build_parent_dir() != self.args.existing_build_dir):
+            logging.warning(
+                f"User-specified build directory : {self.args.existing_build_dir}")
+            logging.warning(
+                f"Computed build directory       : {self.build_conf.get_llvm_build_parent_dir()}")
+            raise ValueError("Build directory mismatch")
 
         if not self.args.upload_earlier_build:
-            logging.info("Clong LLVM code to %s", self.build_conf.get_llvm_project_clone_dir())
+            if self.args.existing_build_dir:
+                logging.info("Not cloning the code, assuming it has already been done.")
+            else:
+                logging.info(
+                    f"Cloning LLVM code to {self.build_conf.get_llvm_project_clone_dir()}")
 
-            mkdir_p(self.build_conf.get_llvm_build_info_dir())
-            git_clone_tag(
-                LLVM_REPO_URL,
-                'llvmorg-%s' % self.build_conf.version,
-                self.build_conf.get_llvm_project_clone_dir())
+                mkdir_p(self.build_conf.get_llvm_build_info_dir())
+                git_clone_tag(
+                    LLVM_REPO_URL,
+                    'llvmorg-%s' % self.build_conf.version,
+                    self.build_conf.get_llvm_project_clone_dir())
 
             if not self.args.skip_auto_suffix:
                 git_sha1 = get_current_git_sha1(self.build_conf.get_llvm_project_clone_dir())
@@ -533,6 +582,7 @@ class ClangBuilder:
                 logging.info(
                     "Final LLVM code directory: %s",
                     self.build_conf.get_llvm_project_clone_dir())
+
             logging.info(
                 "After all stages, LLVM will be built and installed to: %s",
                 self.build_conf.get_final_install_dir())
