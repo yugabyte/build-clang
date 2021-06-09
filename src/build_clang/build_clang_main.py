@@ -378,11 +378,16 @@ class ClangBuildStage:
                 #     '-DLLVM_CCACHE_DIR=%s' % os.path.expanduser('~/.ccache-llvm')
                 # ])
 
-                for target in ['cxxabi', 'cxx', 'compiler-rt', 'clang', 'clangd', 'clangd-indexer']:
+                for target in ['cxxabi', 'cxx', 'compiler-rt', 'clang']:
                     log_info_heading("Building target %s", target)
                     run_cmd(['ninja', target])
                 log_info_heading("Building all other targets")
                 run_cmd(['ninja'])
+                if not self.first_stage:
+                    for target in ['clangd', 'clangd-indexer']:
+                        log_info_heading("Building target %s", target)
+                        run_cmd(['ninja', target])
+                    
                 log_info_heading("Installing")
                 run_cmd(['ninja', 'install'])
                 if self.is_last_stage:
