@@ -212,6 +212,9 @@ class ClangBuildStage:
         self.stage_start_timestamp_str = None
         self.is_last_stage = is_last_stage
 
+    def is_first_stage(self) -> bool:
+        return self.prev_stage is None
+
     def get_llvm_enabled_projects(self) -> List[str]:
         enabled_projects = multiline_str_to_list("""
             clang
@@ -236,7 +239,7 @@ class ClangBuildStage:
 
         https://raw.githubusercontent.com/llvm/llvm-project/master/clang/CMakeLists.txt
         """
-        first_stage = self.prev_stage is None
+        first_stage = self.is_first_stage()
         if not first_stage:
             assert self.prev_stage is not None  # MyPy does not understand this always holds.
             assert self.prev_stage is not self
@@ -383,7 +386,7 @@ class ClangBuildStage:
                     run_cmd(['ninja', target])
                 log_info_heading("Building all other targets")
                 run_cmd(['ninja'])
-                if not self.first_stage:
+                if not self.is_first_stage():
                     for target in ['clangd', 'clangd-indexer']:
                         log_info_heading("Building target %s", target)
                         run_cmd(['ninja', target])
