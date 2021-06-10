@@ -422,6 +422,14 @@ class ClangBuildStage:
                 log_info_heading("Installing")
                 run_cmd(['ninja', 'install'])
                 if self.is_last_stage:
+                    # This file is not installed by "ninja install" so copy it manually.
+                    # TODO: clean up code repetition.
+                    binary_rel_path = 'bin/clangd-indexer'
+                    src_path = os.path.join(self.cmake_build_dir, binary_rel_path)
+                    dst_path = os.path.join(self.install_prefix, binary_rel_path)
+                    logging.info("Copying file %s to %s", src_path, dst_path)
+                    shutil.copyfile(src_path, dst_path)
+
                     for file_name in ['CMakeCache.txt', 'compile_commands.json']:
                         src_path = os.path.join(self.cmake_build_dir, file_name)
                         dst_path = os.path.join(
@@ -473,7 +481,7 @@ class ClangBuilder:
             help='Suffix to append to the top-level directory that we will use for the build. ')
         parser.add_argument(
             '--llvm_version',
-            help='LLVM version to build, e.g. 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0',
+            help='LLVM version to build, e.g. 12.0.0, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0',
             default='12.0.0')
         parser.add_argument(
             '--skip_auto_suffix',
