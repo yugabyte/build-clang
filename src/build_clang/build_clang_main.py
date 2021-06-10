@@ -126,6 +126,7 @@ class ClangBuildConf:
         self.unix_timestamp_for_suffix = None
 
         self.existing_build_dir = existing_build_dir
+        self.tag_override = None
         if self.existing_build_dir:
             build_dir_basename = os.path.basename(self.existing_build_dir)
             invalid_msg_prefix = \
