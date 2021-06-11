@@ -76,6 +76,7 @@ def activate_devtoolset() -> None:
 
 class ClangBuildConf:
     version: str
+    llvm_major_version: int
     user_specified_suffix: Optional[str]
     skip_auto_suffix: bool
     parent_dir_for_all_versions: str
@@ -109,6 +110,8 @@ class ClangBuildConf:
             use_compiler_rt: bool,
             existing_build_dir: Optional[str]) -> None:
         self.version = version
+        self.llvm_major_version = int(version.split('.')[0])
+        assert self.llvm_major_version >= 7
         self.user_specified_suffix = user_specified_suffix
         self.skip_auto_suffix = skip_auto_suffix
         self.parent_dir_for_all_versions = '/opt/yb-build/llvm'
@@ -254,10 +257,9 @@ class ClangBuildStage:
             lld
         """)
         if self.is_last_stage:
-            enabled_projects.extend([
-                'clang-tools-extra',
-                # 'lldb'
-            ])
+            enabled_projects.append('clang-tools-extra')
+            if self.build_conf.llvm_major_version >= 10:
+                enabled_projects.append('lldb')
         return sorted(enabled_projects)
 
     def get_llvm_cmake_variables(self) -> Dict[str, str]:
