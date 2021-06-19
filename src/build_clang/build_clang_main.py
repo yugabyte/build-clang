@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import argparse
 import subprocess
 import logging
@@ -29,6 +30,7 @@ from build_clang.helpers import (
 )
 from build_clang.file_downloader import FileDownloader
 from build_clang.cmake_installer import get_cmake_path
+from build_clang.python_builder import PythonBuilder
 from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 
@@ -55,6 +57,8 @@ BUILD_DIR_SUFFIX = 'build'
 NAME_COMPONENT_SEPARATOR = '-'
 BUILD_DIR_SUFFIX_WITH_SEPARATOR = NAME_COMPONENT_SEPARATOR + BUILD_DIR_SUFFIX
 
+DEFAULT_INSTALL_PARENT_DIR = '/opt/yb-build/llvm'
+
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
     return ['-D%s=%s' % (k, v) for (k, v) in vars.items()]
@@ -75,11 +79,11 @@ def activate_devtoolset() -> None:
 
 
 class ClangBuildConf:
+    install_parent_dir: str
     version: str
     llvm_major_version: int
     user_specified_suffix: Optional[str]
     skip_auto_suffix: bool
-    parent_dir_for_all_versions: str
     git_sha1_prefix: Optional[str]
 
     cmake_executable_path: str
@@ -101,6 +105,7 @@ class ClangBuildConf:
 
     def __init__(
             self,
+            install_parent_dir: str,
             version: str,
             user_specified_suffix: Optional[str],
             skip_auto_suffix: bool,
@@ -109,15 +114,19 @@ class ClangBuildConf:
             lto: bool,
             use_compiler_rt: bool,
             existing_build_dir: Optional[str]) -> None:
+        self.install_parent_dir = install_parent_dir
         self.version = version
         self.llvm_major_version = int(version.split('.')[0])
         assert self.llvm_major_version >= 7
         self.user_specified_suffix = user_specified_suffix
         self.skip_auto_suffix = skip_auto_suffix
-        self.parent_dir_for_all_versions = '/opt/yb-build/llvm'
         self.git_sha1_prefix = None
 
-        self.cmake_executable_path = get_cmake_path()
+        if sys.platform == 'darwin':
+            self.cmake_executable_path = 'cmake'
+        else:
+            self.cmake_executable_path = get_cmake_path()
+
         self.clean_build = clean_build
         self.build_start_timestamp_str = get_current_timestamp_str()
         self.use_compiler_wrapper = use_compiler_wrapper
@@ -149,7 +158,7 @@ class ClangBuildConf:
 
     def get_llvm_build_parent_dir(self) -> str:
         return os.path.join(
-            self.parent_dir_for_all_versions,
+            self.install_parent_dir,
             self.get_install_dir_basename() + BUILD_DIR_SUFFIX_WITH_SEPARATOR)
 
     def get_tag(self) -> str:
@@ -173,7 +182,7 @@ class ClangBuildConf:
 
     def get_final_install_dir(self) -> str:
         return os.path.join(
-            self.parent_dir_for_all_versions,
+            self.install_parent_dir,
             self.get_install_dir_basename())
 
     def get_llvm_build_info_dir(self) -> str:
@@ -322,24 +331,28 @@ class ClangBuildStage:
             #     '-Wl,-rpath=%s' % prev_stage_cxx_lib_dir
             # ])
 
-            extra_linker_flags = ' '.join([
-                '-Wl,-rpath=%s' % os.path.join(self.install_prefix, 'lib')
-            ])
+            extra_linker_flags = []
+            if sys.platform != 'darwin':
+                extra_linker_flags = [
+                    '-Wl,-rpath=%s' % os.path.join(self.install_prefix, 'lib'),
 
-            # To avoid depending on libgcc.a when using Clang's runtime library compiler-rt.
-            # Otherwise building protobuf as part of yugabyte-db-thirdparty fails to find
-            # _Unwind_Resume. _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
-            extra_linker_flags = '-Wl,--exclude-libs,libgcc.a'
+                    # To avoid depending on libgcc.a when using Clang's runtime library compiler-rt.
+                    # Otherwise building protobuf as part of yugabyte-db-thirdparty fails to find
+                    # _Unwind_Resume. _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
+                    '-Wl,--exclude-libs,libgcc.a'
+                ]
+                vars.update(LLVM_ENABLE_LLD=ON)
+
+            extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
-                LLVM_ENABLE_LLD=ON,
                 LLVM_ENABLE_LIBCXX=ON,
                 LLVM_BUILD_TESTS=ON,
                 CLANG_DEFAULT_RTLIB='compiler-rt',
                 SANITIZER_CXX_ABI='libc++',
 
-                CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags,
-                CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags,
-                CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags,
+                CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
+                CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags_str,
+                CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags_str,
                 # LIBCXX_CXX_ABI_INCLUDE_PATHS=os.path.join(
                 #     prev_stage_install_prefix, 'include', 'c++', 'v1')
             )
@@ -459,6 +472,15 @@ class ClangBuilder:
     def parse_args(self) -> None:
         parser = argparse.ArgumentParser(description='Build Clang')
         parser.add_argument(
+            '--install_parent_dir',
+            help='Parent directory of the final installation directory. Default: ' +
+                 DEFAULT_INSTALL_PARENT_DIR,
+            default=DEFAULT_INSTALL_PARENT_DIR)
+        parser.add_argument(
+            '--local_build',
+            help='Run the build locally, even if BUILD_CLANG_REMOTE_... variables are set.',
+            action='store_true')
+        parser.add_argument(
             '--remote_server', help='Server to build on',
             default=os.getenv('BUILD_CLANG_REMOTE_SERVER'))
         parser.add_argument(
@@ -534,6 +556,7 @@ class ClangBuilder:
             self.args.skip_auto_suffix = True
 
         self.build_conf = ClangBuildConf(
+            install_parent_dir=self.args.install_parent_dir,
             version=self.args.llvm_version,
             user_specified_suffix=self.args.top_dir_suffix,
             skip_auto_suffix=self.args.skip_auto_suffix,
@@ -556,7 +579,7 @@ class ClangBuilder:
             prev_stage = self.stages[-1]
 
     def run(self) -> None:
-        if os.getenv('BUILD_CLANG_REMOTELY') == '1':
+        if os.getenv('BUILD_CLANG_REMOTELY') == '1' and not self.args.local_build:
             remote_build.build_remotely(
                 remote_server=self.args.remote_server,
                 remote_build_scripts_path=self.args.remote_build_scripts_path,
@@ -565,14 +588,16 @@ class ClangBuilder:
             )
             return
 
-        activate_devtoolset()
+        if sys.platform != 'darwin':
+            activate_devtoolset()
+
         if (self.args.existing_build_dir is not None and
                 self.build_conf.get_llvm_build_parent_dir() != self.args.existing_build_dir):
             logging.warning(
                 f"User-specified build directory : {self.args.existing_build_dir}")
             logging.warning(
                 f"Computed build directory       : {self.build_conf.get_llvm_build_parent_dir()}")
-            raise ValueError("Build directory mismatch")
+            raise ValueError("Build directory mismatch, see the details above.")
 
         if not self.args.upload_earlier_build:
             if self.args.existing_build_dir:
@@ -666,7 +691,6 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="[%(filename)s:%(lineno)d] %(asctime)s %(levelname)s: %(message)s")
-
     builder = ClangBuilder()
     builder.parse_args()
     builder.run()
