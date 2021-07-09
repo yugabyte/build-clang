@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import time
+import stat
 
 from typing import Any, Optional, Dict, List, Tuple
 
@@ -65,6 +66,16 @@ def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
 
 
 def activate_devtoolset() -> None:
+    # A hacky way to skip devtoolset activation on CentOS Stream 8.
+    # Proper OS detection is needed.
+    if sys.platform == 'linux':
+        os_release_file_path = '/etc/os-release'
+        if os.path.exists(os_release_file_path):
+            with open(os_release_file_path) as os_release_file:
+                os_release_file_contents = os_release_file.read()
+            if 'CentOS Stream 8' in os_release_file_contents:
+                return
+
     devtoolset_env_str = subprocess.check_output(
         ['bash', '-c', '. /opt/rh/devtoolset-8/enable && env']).decode('utf-8')
 
@@ -199,6 +210,14 @@ class ClangBuildConf:
         logging.info("Using git SHA1 prefix: %s", self.git_sha1_prefix)
         logging.info("Renaming %s -> %s", old_build_parent_dir, self.get_llvm_build_parent_dir())
         os.rename(old_build_parent_dir, self.get_llvm_build_parent_dir())
+
+
+def make_file_executable(file_path: str) -> None:
+    """
+    Makes the given file executable by owner.
+    """
+    current_stat = os.stat(file_path)
+    os.chmod(file_path, current_stat.st_mode | stat.S_IXUSR)
 
 
 class ClangBuildStage:
@@ -445,6 +464,7 @@ class ClangBuildStage:
                     dst_path = os.path.join(self.install_prefix, binary_rel_path)
                     logging.info("Copying file %s to %s", src_path, dst_path)
                     shutil.copyfile(src_path, dst_path)
+                    make_file_executable(dst_path)
 
                     for file_name in ['CMakeCache.txt', 'compile_commands.json']:
                         src_path = os.path.join(self.cmake_build_dir, file_name)

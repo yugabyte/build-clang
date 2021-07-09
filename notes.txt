@@ -68,3 +68,11 @@ done
 ./lib/clang/10.0.1/lib/linux/libclang_rt.ubsan_minimal-x86_64.so
 ./lib/clang/10.0.1/lib/linux/libclang_rt.asan-x86_64.so
 ./lib/clang/10.0.1/lib/linux/libclang_rt.hwasan-x86_64.so
+
+
+---
+
+CentOS 8 dependencies:
+
+cmake
+ninja-build
