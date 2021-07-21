@@ -312,7 +312,7 @@ class ClangBuildStage:
             LLVM_ENABLE_PROJECTS=';'.join(self.get_llvm_enabled_projects()),
             CMAKE_INSTALL_PREFIX=self.install_prefix,
             CMAKE_BUILD_TYPE='Release',
-            LLVM_TARGETS_TO_BUILD='X86',
+            LLVM_TARGETS_TO_BUILD='X86;AArch64',
 
             CLANG_DEFAULT_CXX_STDLIB='libc++',
 
