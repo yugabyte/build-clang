@@ -8,6 +8,7 @@ import os
 import shutil
 import time
 import stat
+import platform
 
 from typing import Any, Optional, Dict, List, Tuple
 
@@ -177,7 +178,8 @@ class ClangBuildConf:
                 component for component in [
                     self.unix_timestamp_for_suffix,
                     self.git_sha1_prefix or 'GIT_SHA1_PLACEHOLDER',
-                    self.user_specified_suffix
+                    self.user_specified_suffix,
+                    platform.processor()
                 ] if component
             ])
 
@@ -521,8 +523,8 @@ class ClangBuilder:
             help='Suffix to append to the top-level directory that we will use for the build. ')
         parser.add_argument(
             '--llvm_version',
-            help='LLVM version to build, e.g. 12.0.0, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0',
-            default='12.0.0')
+            help='LLVM version to build, e.g. 12.0.1, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0',
+            default='12.0.1')
         parser.add_argument(
             '--skip_auto_suffix',
             help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
