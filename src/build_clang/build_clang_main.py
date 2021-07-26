@@ -65,15 +65,18 @@ def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
 
 
 def activate_devtoolset() -> None:
-    # A hacky way to skip devtoolset activation on CentOS Stream 8.
-    # Proper OS detection is needed.
-    if sys.platform == 'linux':
-        os_release_file_path = '/etc/os-release'
-        if os.path.exists(os_release_file_path):
-            with open(os_release_file_path) as os_release_file:
-                os_release_file_contents = os_release_file.read()
-            if 'CentOS Stream 8' in os_release_file_contents:
-                return
+    if sys.platform != 'linux':
+        return
+
+    os_release_file_path = '/etc/os-release'
+    if not os.path.exists(os_release_file_path):
+        return
+
+    with open(os_release_file_path) as os_release_file:
+        os_release_file_contents = os_release_file.read()
+
+    if 'CentOS 7' not in os_release_file_contents:
+        return
 
     devtoolset_env_str = subprocess.check_output(
         ['bash', '-c', '. /opt/rh/devtoolset-8/enable && env']).decode('utf-8')
