@@ -29,9 +29,7 @@ from build_clang.helpers import (
     get_current_timestamp_str,
     BUILD_CLANG_SCRIPTS_ROOT_PATH,
 )
-from build_clang.file_downloader import FileDownloader
-from build_clang.cmake_installer import get_cmake_path
-from build_clang.python_builder import PythonBuilder
+
 from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 
@@ -133,10 +131,7 @@ class ClangBuildConf:
         self.skip_auto_suffix = skip_auto_suffix
         self.git_sha1_prefix = None
 
-        if sys.platform == 'darwin':
-            self.cmake_executable_path = 'cmake'
-        else:
-            self.cmake_executable_path = get_cmake_path()
+        self.cmake_executable_path = 'cmake'
 
         self.clean_build = clean_build
         self.build_start_timestamp_str = get_current_timestamp_str()
