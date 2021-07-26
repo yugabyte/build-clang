@@ -75,7 +75,7 @@ def activate_devtoolset() -> None:
     with open(os_release_file_path) as os_release_file:
         os_release_file_contents = os_release_file.read()
 
-    if 'CentOS 7' not in os_release_file_contents:
+    if 'CentOS Linux 7' not in os_release_file_contents:
         return
 
     devtoolset_env_str = subprocess.check_output(
