@@ -177,14 +177,17 @@ class ClangBuildConf:
 
         top_dir_suffix = ''
         if not self.skip_auto_suffix:
-            top_dir_suffix = NAME_COMPONENT_SEPARATOR + NAME_COMPONENT_SEPARATOR.join([
+            components = [
                 component for component in [
                     self.unix_timestamp_for_suffix,
                     self.git_sha1_prefix or 'GIT_SHA1_PLACEHOLDER',
+                    'with-compiler-rt' if self.use_compiler_rt else None,
                     self.user_specified_suffix,
-                    platform.processor()
+                    platform.processor(),
                 ] if component
-            ])
+            ]
+            top_dir_suffix = NAME_COMPONENT_SEPARATOR + NAME_COMPONENT_SEPARATOR.join(
+                    components)
 
         return 'v%s%s' % (self.version, top_dir_suffix)
 
@@ -354,19 +357,22 @@ class ClangBuildStage:
             if sys.platform != 'darwin':
                 extra_linker_flags = [
                     '-Wl,-rpath=%s' % os.path.join(self.install_prefix, 'lib'),
-
-                    # To avoid depending on libgcc.a when using Clang's runtime library compiler-rt.
-                    # Otherwise building protobuf as part of yugabyte-db-thirdparty fails to find
-                    # _Unwind_Resume. _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
-                    '-Wl,--exclude-libs,libgcc.a'
                 ]
+
+                if self.build_conf.use_compiler_rt:
+                    extra_linker_flags.append(
+                        # To avoid depending on libgcc.a when using Clang's runtime library
+                        # compiler-rt. Otherwise building protobuf as part of yugabyte-db-thirdparty
+                        # fails to find _Unwind_Resume.
+                        # _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
+                        '-Wl,--exclude-libs,libgcc.a'
+                    )
                 vars.update(LLVM_ENABLE_LLD=ON)
 
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
                 LLVM_ENABLE_LIBCXX=ON,
                 LLVM_BUILD_TESTS=ON,
-                CLANG_DEFAULT_RTLIB='compiler-rt',
                 SANITIZER_CXX_ABI='libc++',
 
                 CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
@@ -375,6 +381,9 @@ class ClangBuildStage:
                 # LIBCXX_CXX_ABI_INCLUDE_PATHS=os.path.join(
                 #     prev_stage_install_prefix, 'include', 'c++', 'v1')
             )
+            if self.build_conf.use_compiler_rt:
+                vars.update(CLANG_DEFAULT_RTLIB='compiler-rt')
+
             if self.build_conf.lto and self.is_last_stage:
                 vars.update(LLVM_ENABLE_LTO='Full')
 
