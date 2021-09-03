@@ -9,6 +9,7 @@ import shutil
 import time
 import stat
 import platform
+import sys_detection
 
 from typing import Any, Optional, Dict, List, Tuple
 
@@ -65,17 +66,8 @@ def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
 
 
 def activate_devtoolset() -> None:
-    if sys.platform != 'linux':
-        return
-
-    os_release_file_path = '/etc/os-release'
-    if not os.path.exists(os_release_file_path):
-        return
-
-    with open(os_release_file_path) as os_release_file:
-        os_release_file_contents = os_release_file.read()
-
-    if 'CentOS Linux 7' not in os_release_file_contents:
+    if (not sys_detection.is_linux() or
+            sys_detection.local_sys_conf().short_os_name_and_version() != 'centos7'):
         return
 
     devtoolset_env_str = subprocess.check_output(
@@ -177,13 +169,15 @@ class ClangBuildConf:
 
         top_dir_suffix = ''
         if not self.skip_auto_suffix:
+            sys_conf = sys_detection.local_sys_conf()
             components = [
                 component for component in [
                     self.unix_timestamp_for_suffix,
                     self.git_sha1_prefix or 'GIT_SHA1_PLACEHOLDER',
                     'with-compiler-rt' if self.use_compiler_rt else None,
                     self.user_specified_suffix,
-                    platform.processor(),
+                    sys_conf.short_os_name_and_version(),
+                    sys_conf.processor
                 ] if component
             ]
             top_dir_suffix = NAME_COMPONENT_SEPARATOR + NAME_COMPONENT_SEPARATOR.join(
@@ -355,9 +349,13 @@ class ClangBuildStage:
 
             extra_linker_flags = []
             if sys.platform != 'darwin':
-                extra_linker_flags = [
-                    '-Wl,-rpath=%s' % os.path.join(self.install_prefix, 'lib'),
-                ]
+                # Disabled this because it inteferes with Yugabyte ASAN/TSAN builds
+                # (ubsan/asan runtime end up pulling libc++/libc++abi from this lib directory and
+                # not allowing us to use our custom-compiled versions of those libraries.)
+
+                # extra_linker_flags = [
+                #     '-Wl,-rpath=%s' % os.path.join(self.install_prefix, 'lib'),
+                # ]
 
                 if self.build_conf.use_compiler_rt:
                     extra_linker_flags.append(
@@ -682,8 +680,8 @@ class ClangBuilder:
                 logging.info("Removing existing archive %s", archive_path)
                 try:
                     os.remove(archive_path)
-                except OSError:
-                    pass
+                except OSError as ex:
+                    logging.exception("Failed to remove %s, ignoring the error", archive_path)
 
             run_cmd(
                 ['tar', 'czf', archive_name, final_install_dir_basename],
