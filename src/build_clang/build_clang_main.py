@@ -35,7 +35,7 @@ from build_clang.helpers import (
 from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 
-LLVM_REPO_URL = 'https://github.com/llvm/llvm-project.git'
+LLVM_REPO_URL = 'https://github.com/yugabyte/llvm-project.git'
 NUM_STAGES = 3
 
 # Length of Git SHA1 prefix to be used in directory name.
@@ -533,8 +533,9 @@ class ClangBuilder:
             help='Suffix to append to the top-level directory that we will use for the build. ')
         parser.add_argument(
             '--llvm_version',
-            help='LLVM version to build, e.g. 12.0.1, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0',
-            default='12.0.1')
+            help='LLVM version to build, e.g. 12.0.1, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0, or '
+                 'Yugabyte-specific tags with extra patches, such as 12.0.1-yb-1 or 11.1.0-yb-1.',
+            default='12.0.1-yb-1')
         parser.add_argument(
             '--skip_auto_suffix',
             help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
