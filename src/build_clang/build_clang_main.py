@@ -275,12 +275,15 @@ class ClangBuildStage:
     def get_llvm_enabled_projects(self) -> List[str]:
         enabled_projects = multiline_str_to_list("""
             clang
-            compiler-rt
-            libcxx
-            libcxxabi
             libunwind
             lld
         """)
+        if not self.is_first_stage():
+           enabled_projects += multiline_str_to_list("""
+                compiler-rt
+                libcxx
+                libcxxabi
+            """)
         if self.is_last_stage:
             enabled_projects.append('clang-tools-extra')
             if self.build_conf.llvm_major_version >= 10:
@@ -302,37 +305,42 @@ class ClangBuildStage:
             assert self.stage_number > 1
             assert not self.prev_stage.is_last_stage
 
-        ON = 'ON'
-        OFF = 'OFF'
-        use_compiler_rt = ON if self.build_conf.use_compiler_rt else OFF
+        use_compiler_rt = self.build_conf.use_compiler_rt and not self.is_first_stage()
+
         vars = dict(
             LLVM_ENABLE_PROJECTS=';'.join(self.get_llvm_enabled_projects()),
             CMAKE_INSTALL_PREFIX=self.install_prefix,
             CMAKE_BUILD_TYPE='Release',
             LLVM_TARGETS_TO_BUILD='X86;AArch64',
 
-            CLANG_DEFAULT_CXX_STDLIB='libc++',
+            BUILD_SHARED_LIBS=True,
 
-            BUILD_SHARED_LIBS=ON,
+            CMAKE_EXPORT_COMPILE_COMMANDS=True,
 
+            LLVM_ENABLE_RTTI=True,
             LIBCXXABI_USE_COMPILER_RT=use_compiler_rt,
-            LIBCXXABI_USE_LLVM_UNWINDER=ON,
-
             LIBUNWIND_USE_COMPILER_RT=use_compiler_rt,
-
             LIBCXX_USE_COMPILER_RT=use_compiler_rt,
-
-            CMAKE_EXPORT_COMPILE_COMMANDS=ON,
-
-            LLVM_ENABLE_RTTI=ON,
         )
+        if not self.is_first_stage():
+            vars.update(LIBCXXABI_USE_LLVM_UNWINDER=True)
+
+        if self.stage_number >= 2:
+            vars.update(CLANG_DEFAULT_CXX_STDLIB='libc++')
+        else:
+            vars.update(CLANG_DEFAULT_CXX_STDLIB='libstdc++')
+
+        if self.stage_number >= 3:
+            vars.update(SANITIZER_ALLOW_CXXABI=True)
+        else:
+            vars.update(SANITIZER_ALLOW_CXXABI=False)
 
         # LIBCXX_CXX_ABI=libcxxabi
-        # LIBCXX_USE_COMPILER_RT=On
-        # LIBCXXABI_USE_LLVM_UNWINDER=On
-        # LIBCXXABI_USE_COMPILER_RT=On
+        # LIBCXX_USE_COMPILER_RT=True
+        # LIBCXXABI_USE_LLVM_UNWINDER=True
+        # LIBCXXABI_USE_COMPILER_RT=True
         # LIBCXX_HAS_GCC_S_LIB=Off
-        # LIBUNWIND_USE_COMPILER_RT=On
+        # LIBUNWIND_USE_COMPILER_RT=True
 
         if not first_stage:
             assert self.prev_stage is not None
@@ -365,13 +373,11 @@ class ClangBuildStage:
                         # _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
                         '-Wl,--exclude-libs,libgcc.a'
                     )
-                vars.update(LLVM_ENABLE_LLD=ON)
+                vars.update(LLVM_ENABLE_LLD=True)
 
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
-                LLVM_ENABLE_LIBCXX=ON,
-                LLVM_BUILD_TESTS=ON,
-                SANITIZER_CXX_ABI='libc++',
+                LLVM_BUILD_TESTS=True,
 
                 CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
                 CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags_str,
@@ -379,7 +385,17 @@ class ClangBuildStage:
                 # LIBCXX_CXX_ABI_INCLUDE_PATHS=os.path.join(
                 #     prev_stage_install_prefix, 'include', 'c++', 'v1')
             )
-            if self.build_conf.use_compiler_rt:
+            if self.stage_number >= 3:
+                # Only use libc++ to build LLVM for stage 3 and later, because the previous stage's
+                # compiler must have built libc++, and that does not happen for stage 1.
+                vars.update(
+                    SANITIZER_CXX_ABI='libc++',
+                    LLVM_ENABLE_LIBCXX=True,
+                )
+            else:
+                vars.update(LLVM_ENABLE_LIBCXX=False)
+
+            if use_compiler_rt:
                 vars.update(CLANG_DEFAULT_RTLIB='compiler-rt')
 
             if self.build_conf.lto and self.is_last_stage:
@@ -393,6 +409,11 @@ class ClangBuildStage:
                 CMAKE_C_COMPILER=c_compiler,
                 CMAKE_CXX_COMPILER=cxx_compiler
             )
+        for k in vars:
+            if vars[k] is True:
+                vars[k] = 'ON'
+            if vars[k] is False:
+                vars[k] = 'OFF'
         return vars
 
     def get_compilers(self) -> Tuple[str, str]:
@@ -443,15 +464,19 @@ class ClangBuildStage:
                 #     '-DCMAKE_INSTALL_PREFIX=%s' % llvm_install_prefix,
                 #     '-DCMAKE_BUILD_TYPE=Release',
                 #     '-DLLVM_TARGETS_TO_BUILD=X86',
-                #     # '-DLLVM_BUILD_TESTS=ON',
-                #     # '-DLLVM_BUILD_EXAMPLES=ON',
-                #     '-DLLVM_CCACHE_BUILD=ON',
+                #     # '-DLLVM_BUILD_TESTS=True',
+                #     # '-DLLVM_BUILD_EXAMPLES=True',
+                #     '-DLLVM_CCACHE_BUILD=True',
                 #     '-DLLVM_CCACHE_MAXSIZE=100G',
-                #     '-DBOOTSTRAP_LLVM_ENABLE_LLD=ON',
+                #     '-DBOOTSTRAP_LLVM_ENABLE_LLD=True',
                 #     '-DLLVM_CCACHE_DIR=%s' % os.path.expanduser('~/.ccache-llvm')
                 # ])
 
-                for target in ['cxxabi', 'cxx', 'compiler-rt', 'clang']:
+                targets = []
+                if not self.is_first_stage():
+                    targets = ['compiler-rt', 'cxxabi', 'cxx'] + targets
+                targets.append('clang')
+                for target in targets:
                     log_info_heading("Building target %s", target)
                     run_cmd(['ninja', target])
                 log_info_heading("Building all other targets")
@@ -535,7 +560,7 @@ class ClangBuilder:
             '--llvm_version',
             help='LLVM version to build, e.g. 12.0.1, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0, or '
                  'Yugabyte-specific tags with extra patches, such as 12.0.1-yb-1 or 11.1.0-yb-1.',
-            default='12.0.1-yb-1')
+            default='13.0.0')
         parser.add_argument(
             '--skip_auto_suffix',
             help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
