@@ -11,7 +11,7 @@ import stat
 import platform
 import sys_detection
 
-from typing import Any, Optional, Dict, List, Tuple
+from typing import Any, Optional, Dict, List, Tuple, Union
 
 from build_clang import remote_build
 from build_clang.git_helpers import (
@@ -63,6 +63,16 @@ DEFAULT_INSTALL_PARENT_DIR = '/opt/yb-build/llvm'
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
     return ['-D%s=%s' % (k, v) for (k, v) in vars.items()]
+
+
+def to_cmake_option(v: Union[bool, str]) -> str:
+    if isinstance(v, str):
+        return v
+    if v is True:
+        return 'ON'
+    if v is False:
+        return 'OFF'
+    raise ValueError("Cannot convert to a CMake option value: %s" % v)
 
 
 def activate_devtoolset() -> None:
@@ -279,14 +289,19 @@ class ClangBuildStage:
             lld
         """)
         if not self.is_first_stage():
-           enabled_projects += multiline_str_to_list("""
+            # For first stage, we don't build these projects because the bootstrap compiler
+            # might not be able to compile them (e.g. GCC 8 is having trouble building libc++
+            # from the LLVM 13 codebase).
+            enabled_projects += multiline_str_to_list("""
                 compiler-rt
                 libcxx
                 libcxxabi
             """)
         if self.is_last_stage:
+            # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
             if self.build_conf.llvm_major_version >= 10:
+                # There were some issues building lldb for LLVM 9 and older.
                 enabled_projects.append('lldb')
         return sorted(enabled_projects)
 
@@ -298,14 +313,22 @@ class ClangBuildStage:
 
         https://raw.githubusercontent.com/llvm/llvm-project/master/clang/CMakeLists.txt
         """
-        first_stage = self.is_first_stage()
-        if not first_stage:
+
+        vars: Dict[str, Union[str, bool]] = {}
+
+        use_compiler_rt = False
+        if not self.is_first_stage():
+            vars['CLANG_DEFAULT_CXX_STDLIB'] = 'libc++'
             assert self.prev_stage is not None  # MyPy does not understand this always holds.
             assert self.prev_stage is not self
             assert self.stage_number > 1
             assert not self.prev_stage.is_last_stage
 
-        use_compiler_rt = self.build_conf.use_compiler_rt and not self.is_first_stage()
+            # compiler_rt is never enabled for the first stage.
+            use_compiler_rt = self.build_conf.use_compiler_rt
+
+        # For the first stage, we don't specify the default C++ standard library, and just use the
+        # default.
 
         vars = dict(
             LLVM_ENABLE_PROJECTS=';'.join(self.get_llvm_enabled_projects()),
@@ -323,48 +346,17 @@ class ClangBuildStage:
             LIBCXX_USE_COMPILER_RT=use_compiler_rt,
         )
         if not self.is_first_stage():
-            vars.update(LIBCXXABI_USE_LLVM_UNWINDER=True)
+            vars['LIBCXXABI_USE_LLVM_UNWINDER'] = True
 
-        if self.stage_number >= 2:
-            vars.update(CLANG_DEFAULT_CXX_STDLIB='libc++')
-        else:
-            vars.update(CLANG_DEFAULT_CXX_STDLIB='libstdc++')
-
-        if self.stage_number >= 3:
-            vars.update(SANITIZER_ALLOW_CXXABI=True)
-        else:
-            vars.update(SANITIZER_ALLOW_CXXABI=False)
-
-        # LIBCXX_CXX_ABI=libcxxabi
-        # LIBCXX_USE_COMPILER_RT=True
-        # LIBCXXABI_USE_LLVM_UNWINDER=True
-        # LIBCXXABI_USE_COMPILER_RT=True
-        # LIBCXX_HAS_GCC_S_LIB=Off
-        # LIBUNWIND_USE_COMPILER_RT=True
-
-        if not first_stage:
+        if not self.is_first_stage():
             assert self.prev_stage is not None
             prev_stage_install_prefix = self.prev_stage.install_prefix
             prev_stage_cxx_include_dir = os.path.join(
                 prev_stage_install_prefix, 'include', 'c++', 'v1')
             prev_stage_cxx_lib_dir = os.path.join(prev_stage_install_prefix, 'lib')
 
-            # extra_cxx_flags = '-I%s' % prev_stage_cxx_include_dir,
-            # extra_linker_flags = ' '.join([
-            #     '-L%s' % prev_stage_cxx_lib_dir,
-            #     '-Wl,-rpath=%s' % prev_stage_cxx_lib_dir
-            # ])
-
             extra_linker_flags = []
             if sys.platform != 'darwin':
-                # Disabled this because it inteferes with Yugabyte ASAN/TSAN builds
-                # (ubsan/asan runtime end up pulling libc++/libc++abi from this lib directory and
-                # not allowing us to use our custom-compiled versions of those libraries.)
-
-                # extra_linker_flags = [
-                #     '-Wl,-rpath=%s' % os.path.join(self.install_prefix, 'lib'),
-                # ]
-
                 if self.build_conf.use_compiler_rt:
                     extra_linker_flags.append(
                         # To avoid depending on libgcc.a when using Clang's runtime library
@@ -373,7 +365,15 @@ class ClangBuildStage:
                         # _Unwind_Resume is ultimately defined in /lib64/libgcc_s.so.1.
                         '-Wl,--exclude-libs,libgcc.a'
                     )
-                vars.update(LLVM_ENABLE_LLD=True)
+
+                # Description for LLVM_ENABLE_LLD from https://llvm.org/docs/CMake.html:
+                #
+                # > This option is equivalent to -DLLVM_USE_LINKER=lld, except during a 2-stage
+                # > build where a dependency is added from the first stage to the second ensuring
+                # > that lld is built before stage2 begins.
+                #
+                # So, simply speaking, this enables the use of lld for building LLVM.
+                vars['LLVM_ENABLE_LLD'] = True
 
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
@@ -382,24 +382,27 @@ class ClangBuildStage:
                 CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
                 CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags_str,
                 CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags_str,
-                # LIBCXX_CXX_ABI_INCLUDE_PATHS=os.path.join(
-                #     prev_stage_install_prefix, 'include', 'c++', 'v1')
             )
-            if self.stage_number >= 3:
-                # Only use libc++ to build LLVM for stage 3 and later, because the previous stage's
-                # compiler must have built libc++, and that does not happen for stage 1.
-                vars.update(
-                    SANITIZER_CXX_ABI='libc++',
-                    LLVM_ENABLE_LIBCXX=True,
-                )
-            else:
-                vars.update(LLVM_ENABLE_LIBCXX=False)
 
             if use_compiler_rt:
                 vars.update(CLANG_DEFAULT_RTLIB='compiler-rt')
 
             if self.build_conf.lto and self.is_last_stage:
                 vars.update(LLVM_ENABLE_LTO='Full')
+
+        # =========================================================================================
+        # Stage 3
+        # =========================================================================================
+
+        # The description of SANITIZER_ALLOW_CXXABI is "Allow use of C++ ABI details in ubsan".
+        # We only enable it for stage 3 or later because we only build libc++ and libc++abi
+        # starting at stage 2.
+        if self.stage_number >= 3:
+            vars.update(
+                SANITIZER_ALLOW_CXXABI=True,
+                SANITIZER_CXX_ABI='libc++',
+                LLVM_ENABLE_LIBCXX=True,
+            )
 
         if self.build_conf.use_compiler_wrapper:
             vars.update(get_cmake_args_for_compiler_wrapper())
@@ -409,12 +412,11 @@ class ClangBuildStage:
                 CMAKE_C_COMPILER=c_compiler,
                 CMAKE_CXX_COMPILER=cxx_compiler
             )
+
+        final_vars: Dict[str, str] = {}
         for k in vars:
-            if vars[k] is True:
-                vars[k] = 'ON'
-            if vars[k] is False:
-                vars[k] = 'OFF'
-        return vars
+            final_vars[k] = to_cmake_option(vars[k])
+        return final_vars
 
     def get_compilers(self) -> Tuple[str, str]:
         if self.stage_number == 1:
@@ -472,7 +474,7 @@ class ClangBuildStage:
                 #     '-DLLVM_CCACHE_DIR=%s' % os.path.expanduser('~/.ccache-llvm')
                 # ])
 
-                targets = []
+                targets: List[str] = []
                 if not self.is_first_stage():
                     targets = ['compiler-rt', 'cxxabi', 'cxx'] + targets
                 targets.append('clang')
@@ -560,7 +562,7 @@ class ClangBuilder:
             '--llvm_version',
             help='LLVM version to build, e.g. 12.0.1, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0, or '
                  'Yugabyte-specific tags with extra patches, such as 12.0.1-yb-1 or 11.1.0-yb-1.',
-            default='13.0.0')
+            default='13.0.0-yb-1')
         parser.add_argument(
             '--skip_auto_suffix',
             help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
@@ -607,6 +609,18 @@ class ClangBuilder:
         if self.args.existing_build_dir:
             logging.info("Assuming --skip_auto_suffix because --existing_build_dir is set")
             self.args.skip_auto_suffix = True
+
+        llvm_version = self.args.llvm_version
+        adjusted_llvm_version = llvm_version
+        if llvm_version == '11':
+            adjusted_llvm_version = '12.1.0-yb-1'
+        if llvm_version == '12':
+            adjusted_llvm_version = '12.0.1-yb-1'
+        if llvm_version == '13':
+            adjusted_llvm_version = '13.0.0-yb-1'
+        if llvm_version != adjusted_llvm_version:
+            logging.info("Automatically substituting LLVM version tag %s for %s",
+                         adjusted_llvm_version, llvm_version)
 
         self.build_conf = ClangBuildConf(
             install_parent_dir=self.args.install_parent_dir,
