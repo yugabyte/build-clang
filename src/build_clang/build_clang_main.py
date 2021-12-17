@@ -461,20 +461,7 @@ class ClangBuildStage:
                     '-S', os.path.join(self.build_conf.get_llvm_project_clone_dir(), 'llvm')
                 ] + cmake_vars_to_args(cmake_vars))
 
-                #     '-S', llvm_src_path,
-                #     '-DLLVM_ENABLE_PROJECTS=%s' % ';'.join(LLVM_ENABLE_PROJECTS),
-                #     '-DCMAKE_INSTALL_PREFIX=%s' % llvm_install_prefix,
-                #     '-DCMAKE_BUILD_TYPE=Release',
-                #     '-DLLVM_TARGETS_TO_BUILD=X86',
-                #     # '-DLLVM_BUILD_TESTS=True',
-                #     # '-DLLVM_BUILD_EXAMPLES=True',
-                #     '-DLLVM_CCACHE_BUILD=True',
-                #     '-DLLVM_CCACHE_MAXSIZE=100G',
-                #     '-DBOOTSTRAP_LLVM_ENABLE_LLD=True',
-                #     '-DLLVM_CCACHE_DIR=%s' % os.path.expanduser('~/.ccache-llvm')
-                # ])
-
-                targets: List[str] = []
+                targets: List = []
                 if not self.is_first_stage():
                     targets = ['compiler-rt', 'cxxabi', 'cxx'] + targets
                 targets.append('clang')
