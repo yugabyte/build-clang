@@ -10,6 +10,8 @@ import time
 import stat
 import platform
 import sys_detection
+import shlex
+import git
 
 from typing import Any, Optional, Dict, List, Tuple, Union
 
@@ -59,6 +61,9 @@ NAME_COMPONENT_SEPARATOR = '-'
 BUILD_DIR_SUFFIX_WITH_SEPARATOR = NAME_COMPONENT_SEPARATOR + BUILD_DIR_SUFFIX
 
 DEFAULT_INSTALL_PARENT_DIR = '/opt/yb-build/llvm'
+
+# Relative path to the directory where we clone the LLVM source code.
+LLVM_PROJECT_CLONE_REL_PATH = os.path.join('src', 'llvm-project')
 
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
@@ -207,7 +212,7 @@ class ClangBuildConf:
         return os.path.join(self.get_final_install_dir(), 'etc', 'yb-llvm-build-info')
 
     def get_llvm_project_clone_dir(self) -> str:
-        return os.path.join(self.get_llvm_build_parent_dir(), 'src', 'llvm-project')
+        return os.path.join(self.get_llvm_build_parent_dir(), LLVM_PROJECT_CLONE_REL_PATH)
 
     def set_git_sha1(self, git_sha1: str) -> None:
         old_build_parent_dir = self.get_llvm_build_parent_dir()
@@ -606,8 +611,9 @@ class ClangBuilder:
         if llvm_version == '13':
             adjusted_llvm_version = '13.0.0-yb-1'
         if llvm_version != adjusted_llvm_version:
-            logging.info("Automatically substituting LLVM version tag %s for %s",
+            logging.info("Automatically substituting LLVM version %s for %s",
                          adjusted_llvm_version, llvm_version)
+        self.args.llvm_version = adjusted_llvm_version
 
         self.build_conf = ClangBuildConf(
             install_parent_dir=self.args.install_parent_dir,
@@ -631,6 +637,47 @@ class ClangBuilder:
                 is_last_stage=(stage_number == NUM_STAGES)
             ))
             prev_stage = self.stages[-1]
+
+    def clone_llvm_source_code(self) -> None:
+        llvm_project_src_path = self.build_conf.get_llvm_project_clone_dir()
+        logging.info(f"Cloning LLVM code to {llvm_project_src_path}")
+
+        find_cmd = [
+            'find', '/opt/yb-build/llvm', '-mindepth', '3', '-maxdepth', '3',
+            '-wholename', os.path.join('*', LLVM_PROJECT_CLONE_REL_PATH)
+        ]
+        logging.info("Searching for existing LLVM source directories using command: %s",
+                     ' '.join([shlex.quote(item) for item in find_cmd]))
+        existing_src_dirs = subprocess.check_output(find_cmd).decode('utf-8').split('\n')
+
+        tag_we_want = 'llvmorg-%s' % self.build_conf.version
+
+        existing_dir_to_use: Optional[str] = None
+        for existing_src_dir in existing_src_dirs:
+            existing_src_dir = existing_src_dir.strip()
+            if not existing_src_dir:
+                continue
+            if not os.path.exists(existing_src_dir):
+                logging.warning("Directory %s does not exist", existing_src_dir)
+                continue
+
+            repo = git.Repo(existing_src_dir)
+            # From https://stackoverflow.com/questions/32523121/gitpython-get-current-tag-detached-head
+            tag_name = next((tag for tag in repo.tags if tag.commit == repo.head.commit), None)
+            logging.info("Found existing LLVM source directory: %s, checked-out tag: %s",
+                         existing_src_dir, tag_name)
+            if tag_we_want == tag_name.name:
+                logging.info("This matches the tag we want, cloning from this directory")
+                existing_dir_to_use = existing_src_dir
+                break
+        if not existing_dir_to_use:
+            logging.info("Did not find an existing checkout of tag %s, will clone %s",
+                         tag_we_want, LLVM_REPO_URL)
+
+        git_clone_tag(
+            LLVM_REPO_URL if existing_dir_to_use is None else existing_dir_to_use,
+            tag_we_want,
+            llvm_project_src_path)
 
     def run(self) -> None:
         if os.getenv('BUILD_CLANG_REMOTELY') == '1' and not self.args.local_build:
@@ -657,14 +704,8 @@ class ClangBuilder:
             if self.args.existing_build_dir:
                 logging.info("Not cloning the code, assuming it has already been done.")
             else:
-                logging.info(
-                    f"Cloning LLVM code to {self.build_conf.get_llvm_project_clone_dir()}")
-
+                self.clone_llvm_source_code()
                 mkdir_p(self.build_conf.get_llvm_build_info_dir())
-                git_clone_tag(
-                    LLVM_REPO_URL,
-                    'llvmorg-%s' % self.build_conf.version,
-                    self.build_conf.get_llvm_project_clone_dir())
 
             if not self.args.skip_auto_suffix:
                 git_sha1 = get_current_git_sha1(self.build_conf.get_llvm_project_clone_dir())

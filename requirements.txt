@@ -5,3 +5,4 @@ PyGithub
 codecheck
 downloadutil
 sys-detection
+gitpython
