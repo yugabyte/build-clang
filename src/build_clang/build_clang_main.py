@@ -500,7 +500,7 @@ class ClangBuildStage:
                 if self.is_last_stage:
                     for target in ['clangd', 'clangd-indexer']:
                         log_info_heading(stage_prefix + "Building target %s", target)
-                        run_ninja(target)
+                        self._run_ninja(target)
 
                 log_info_heading("Installing")
                 self._run_ninja('install')
