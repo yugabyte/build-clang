@@ -12,6 +12,7 @@ import platform
 import sys_detection
 import shlex
 import git
+import atexit
 
 from typing import Any, Optional, Dict, List, Tuple, Union
 
@@ -64,6 +65,16 @@ DEFAULT_INSTALL_PARENT_DIR = '/opt/yb-build/llvm'
 
 # Relative path to the directory where we clone the LLVM source code.
 LLVM_PROJECT_CLONE_REL_PATH = os.path.join('src', 'llvm-project')
+
+GIT_SHA1_PLACEHOLDER_STR = 'GIT_SHA1_PLACEHOLDER'
+GIT_SHA1_PLACEHOLDER_STR_WITH_SEPARATORS = (
+    NAME_COMPONENT_SEPARATOR + GIT_SHA1_PLACEHOLDER_STR + NAME_COMPONENT_SEPARATOR)
+
+LLVM_VERSION_MAP = {
+    '11': '11.1.0-yb-1',
+    '12': '12.0.1-yb-1',
+    '13': '13.0.0-yb-1',
+}
 
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
@@ -123,6 +134,8 @@ class ClangBuildConf:
 
     tag_override: Optional[str]
 
+    parallelism: Optional[int]
+
     def __init__(
             self,
             install_parent_dir: str,
@@ -133,7 +146,8 @@ class ClangBuildConf:
             use_compiler_wrapper: bool,
             lto: bool,
             use_compiler_rt: bool,
-            existing_build_dir: Optional[str]) -> None:
+            existing_build_dir: Optional[str],
+            parallelism: Optional[int]) -> None:
         self.install_parent_dir = install_parent_dir
         self.version = version
         self.llvm_major_version = int(version.split('.')[0])
@@ -173,6 +187,8 @@ class ClangBuildConf:
         else:
             self.unix_timestamp_for_suffix = str(int(time.time()))
 
+        self.parallelism = parallelism
+
     def get_llvm_build_parent_dir(self) -> str:
         return os.path.join(
             self.install_parent_dir,
@@ -188,8 +204,8 @@ class ClangBuildConf:
             components = [
                 component for component in [
                     self.unix_timestamp_for_suffix,
-                    self.git_sha1_prefix or 'GIT_SHA1_PLACEHOLDER',
-                    'with-compiler-rt' if self.use_compiler_rt else None,
+                    self.git_sha1_prefix or GIT_SHA1_PLACEHOLDER_STR,
+                    None if self.use_compiler_rt else 'no-compiler-rt',
                     self.user_specified_suffix,
                     sys_conf.short_os_name_and_version(),
                     sys_conf.processor
@@ -321,19 +337,12 @@ class ClangBuildStage:
 
         vars: Dict[str, Union[str, bool]] = {}
 
-        use_compiler_rt = False
-        if not self.is_first_stage():
-            vars['CLANG_DEFAULT_CXX_STDLIB'] = 'libc++'
-            assert self.prev_stage is not None  # MyPy does not understand this always holds.
-            assert self.prev_stage is not self
-            assert self.stage_number > 1
-            assert not self.prev_stage.is_last_stage
-
-            # compiler_rt is never enabled for the first stage.
-            use_compiler_rt = self.build_conf.use_compiler_rt
+        use_compiler_rt = self.build_conf.use_compiler_rt
 
         # For the first stage, we don't specify the default C++ standard library, and just use the
-        # default.
+        # default. For second stage and later, we build libc++ and tell Clang to use it by default.
+        if not self.is_first_stage():
+            vars['CLANG_DEFAULT_CXX_STDLIB'] = 'libc++'
 
         vars = dict(
             LLVM_ENABLE_PROJECTS=';'.join(self.get_llvm_enabled_projects()),
@@ -346,19 +355,22 @@ class ClangBuildStage:
             CMAKE_EXPORT_COMPILE_COMMANDS=True,
 
             LLVM_ENABLE_RTTI=True,
-            LIBCXXABI_USE_COMPILER_RT=use_compiler_rt,
-            LIBUNWIND_USE_COMPILER_RT=use_compiler_rt,
-            LIBCXX_USE_COMPILER_RT=use_compiler_rt,
         )
-        if not self.is_first_stage():
-            vars['LIBCXXABI_USE_LLVM_UNWINDER'] = True
+
+        if self.stage_number >= 3 and use_compiler_rt:
+            # For the first stage, we don't even build compiler-rt.
+            # For the second stage, we build it.
+            # For the third stage, we can build it and use it for building various libraries.
+            vars.update(
+                LIBCXXABI_USE_COMPILER_RT=True,
+                LIBUNWIND_USE_COMPILER_RT=True,
+                LIBCXX_USE_COMPILER_RT=True,
+            )
 
         if not self.is_first_stage():
-            assert self.prev_stage is not None
-            prev_stage_install_prefix = self.prev_stage.install_prefix
-            prev_stage_cxx_include_dir = os.path.join(
-                prev_stage_install_prefix, 'include', 'c++', 'v1')
-            prev_stage_cxx_lib_dir = os.path.join(prev_stage_install_prefix, 'lib')
+            # At the second stage and later, we can use LLVM libunwind because it has already been
+            # built.
+            vars['LIBCXXABI_USE_LLVM_UNWINDER'] = True
 
             extra_linker_flags = []
             if sys.platform != 'darwin':
@@ -382,15 +394,14 @@ class ClangBuildStage:
 
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
-                LLVM_BUILD_TESTS=True,
-
                 CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
                 CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags_str,
                 CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags_str,
             )
 
-            if use_compiler_rt:
-                vars.update(CLANG_DEFAULT_RTLIB='compiler-rt')
+            if self.is_last_stage:
+                # We only need tests at the last stage because that's where we build clangd-indexer.
+                vars['LLVM_BUILD_TESTS'] = True
 
             if self.build_conf.lto and self.is_last_stage:
                 vars.update(LLVM_ENABLE_LTO='Full')
@@ -407,6 +418,9 @@ class ClangBuildStage:
                 SANITIZER_ALLOW_CXXABI=True,
                 SANITIZER_CXX_ABI='libc++',
                 LLVM_ENABLE_LIBCXX=True,
+                # We only switch to compiler-rt as the default runtime library for the third stage,
+                # even though we build it for the second stage as well.
+                CLANG_DEFAULT_RTLIB='compiler-rt'
             )
 
         if self.build_conf.use_compiler_wrapper:
@@ -436,10 +450,18 @@ class ClangBuildStage:
         assert cxx_compiler is not None
         return c_compiler, cxx_compiler
 
+    def _run_ninja(self, *args: List[str]) -> None:
+        ninja_args = ['ninja']
+        if self.build_conf.parallelism:
+            ninja_args.append('-j%d' % self.build_conf.parallelism)
+        ninja_args += args
+        run_cmd(ninja_args)
+
     def build(self) -> None:
+        stage_prefix = '[Stage %d] ' % self.stage_number
         self.stage_start_timestamp_str = get_current_timestamp_str()
         if os.path.exists(self.cmake_build_dir) and self.build_conf.clean_build:
-            logging.info("Deleting directory: %s", self.cmake_build_dir)
+            logging.info(stage_prefix + "Deleting directory: %s", self.cmake_build_dir)
             rm_rf(self.cmake_build_dir)
 
         c_compiler, cxx_compiler = self.get_compilers()
@@ -471,24 +493,24 @@ class ClangBuildStage:
                     targets = ['compiler-rt', 'cxxabi', 'cxx'] + targets
                 targets.append('clang')
                 for target in targets:
-                    log_info_heading("Building target %s", target)
-                    run_cmd(['ninja', target])
-                log_info_heading("Building all other targets")
-                run_cmd(['ninja'])
+                    log_info_heading(stage_prefix + "Building target %s", target)
+                    self._run_ninja(target)
+                log_info_heading(stage_prefix + "Building all other targets")
+                self._run_ninja()
                 if self.is_last_stage:
                     for target in ['clangd', 'clangd-indexer']:
-                        log_info_heading("Building target %s", target)
-                        run_cmd(['ninja', target])
+                        log_info_heading(stage_prefix + "Building target %s", target)
+                        run_ninja(target)
 
                 log_info_heading("Installing")
-                run_cmd(['ninja', 'install'])
+                self._run_ninja('install')
                 if self.is_last_stage:
                     # This file is not installed by "ninja install" so copy it manually.
                     # TODO: clean up code repetition.
                     binary_rel_path = 'bin/clangd-indexer'
                     src_path = os.path.join(self.cmake_build_dir, binary_rel_path)
                     dst_path = os.path.join(self.install_prefix, binary_rel_path)
-                    logging.info("Copying file %s to %s", src_path, dst_path)
+                    logging.info(stage_prefix + "Copying file %s to %s", src_path, dst_path)
                     shutil.copyfile(src_path, dst_path)
                     make_file_executable(dst_path)
 
@@ -496,7 +518,7 @@ class ClangBuildStage:
                         src_path = os.path.join(self.cmake_build_dir, file_name)
                         dst_path = os.path.join(
                             self.build_conf.get_llvm_build_info_dir(), file_name)
-                        logging.info("Copying file %s to %s", src_path, dst_path)
+                        logging.info(stage_prefix + "Copying file %s to %s", src_path, dst_path)
                         shutil.copyfile(src_path, dst_path)
 
     def check_dynamic_libraries(self) -> None:
@@ -578,15 +600,19 @@ class ClangBuilder:
             help='Reuse existing tarball (for use with --upload_earlier_build).',
             action='store_true')
         parser.add_argument(
-            '--use_compiler_rt',
-            help='Use compiler-rt runtime',
+            '--no_compiler_rt',
+            help='Do not use compiler-rt runtime',
             action='store_true')
         parser.add_argument(
             '--existing_build_dir',
             help='Continue build in an existing directory, e.g. '
                  '/opt/yb-build/llvm/yb-llvm-v12.0.0-1618898532-d28af7c6-build. '
                  'This helps when developing these scripts to avoid rebuilding from scratch.')
-
+        parser.add_argument(
+            '--parallelism', '-j',
+            type=int,
+            help='Set the parallelism level for Ninja builds'
+        )
         self.args = parser.parse_args()
 
         if self.args.min_stage < 1:
@@ -602,17 +628,11 @@ class ClangBuilder:
             logging.info("Assuming --skip_auto_suffix because --existing_build_dir is set")
             self.args.skip_auto_suffix = True
 
-        llvm_version = self.args.llvm_version
-        adjusted_llvm_version = llvm_version
-        if llvm_version == '11':
-            adjusted_llvm_version = '12.1.0-yb-1'
-        if llvm_version == '12':
-            adjusted_llvm_version = '12.0.1-yb-1'
-        if llvm_version == '13':
-            adjusted_llvm_version = '13.0.0-yb-1'
-        if llvm_version != adjusted_llvm_version:
+        adjusted_llvm_version = LLVM_VERSION_MAP.get(
+            self.args.llvm_version, self.args.llvm_version)
+        if self.args.llvm_version != adjusted_llvm_version:
             logging.info("Automatically substituting LLVM version %s for %s",
-                         adjusted_llvm_version, llvm_version)
+                         adjusted_llvm_version, self.args.llvm_version)
         self.args.llvm_version = adjusted_llvm_version
 
         self.build_conf = ClangBuildConf(
@@ -623,8 +643,9 @@ class ClangBuilder:
             clean_build=self.args.clean,
             use_compiler_wrapper=self.args.use_compiler_wrapper,
             lto=self.args.lto,
-            use_compiler_rt=self.args.use_compiler_rt,
-            existing_build_dir=self.args.existing_build_dir
+            use_compiler_rt=not self.args.no_compiler_rt,
+            existing_build_dir=self.args.existing_build_dir,
+            parallelism=self.args.parallelism
         )
 
     def init_stages(self) -> None:
@@ -662,17 +683,37 @@ class ClangBuilder:
                 continue
 
             repo = git.Repo(existing_src_dir)
-            # From https://stackoverflow.com/questions/32523121/gitpython-get-current-tag-detached-head
-            tag_name = next((tag for tag in repo.tags if tag.commit == repo.head.commit), None)
-            logging.info("Found existing LLVM source directory: %s, checked-out tag: %s",
-                         existing_src_dir, tag_name)
-            if tag_we_want == tag_name.name:
-                logging.info("This matches the tag we want, cloning from this directory")
-                existing_dir_to_use = existing_src_dir
+            # From https://stackoverflow.com/questions/34932306/get-tags-of-a-commit
+            # Also relevant: 
+            # https://stackoverflow.com/questions/32523121/gitpython-get-current-tag-detached-head
+            for tag in repo.tags:
+                tag_commit = repo.commit(tag)
+                if tag_commit.hexsha == repo.head.commit.hexsha:
+                    logging.info(
+                        "Found tag %s in %s matching the head SHA1 %s",
+                        tag.name, existing_src_dir, repo.head.commit.hexsha)
+                    if tag.name == tag_we_want:
+                        existing_dir_to_use = existing_src_dir
+                        logging.info(
+                            "This tag matches the name we want: %s, will clone from directory %s",
+                            tag_we_want, existing_dir_to_use)
+                        break
+            if existing_dir_to_use:
                 break
         if not existing_dir_to_use:
             logging.info("Did not find an existing checkout of tag %s, will clone %s",
                          tag_we_want, LLVM_REPO_URL)
+
+        if GIT_SHA1_PLACEHOLDER_STR_WITH_SEPARATORS in os.path.basename(
+                os.path.dirname(os.path.dirname(llvm_project_src_path))):
+            def remove_dir_with_placeholder_in_name():
+                if os.path.exists(llvm_project_src_path):
+                    logging.info("Removing directory %s", llvm_project_src_path)
+                    subprocess.call(['rm', '-rf', llvm_project_src_path])
+                else:
+                    logging.warning("Directory %s does not exist, nothing to remove",
+                                    llvm_project_src_path)
+            atexit.register(remove_dir_with_placeholder_in_name)
 
         git_clone_tag(
             LLVM_REPO_URL if existing_dir_to_use is None else existing_dir_to_use,
