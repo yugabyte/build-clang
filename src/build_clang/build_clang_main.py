@@ -208,7 +208,7 @@ class ClangBuildConf:
                     None if self.use_compiler_rt else 'no-compiler-rt',
                     self.user_specified_suffix,
                     sys_conf.short_os_name_and_version(),
-                    sys_conf.processor
+                    sys_conf.architecture
                 ] if component
             ]
             top_dir_suffix = NAME_COMPONENT_SEPARATOR + NAME_COMPONENT_SEPARATOR.join(
