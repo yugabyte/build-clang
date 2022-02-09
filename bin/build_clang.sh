@@ -20,8 +20,12 @@ do_build() {
 
   set_pythonpath
 
-  set -x
-  python3 "$build_clang_project_root/src/build_clang/build_clang_main.py" "${args[@]}"
+  set +u  # Because args could be empty.
+  (
+    set -x
+    python3 "$build_clang_project_root/src/build_clang/build_clang_main.py" "${args[@]}"
+  )
+  set -u
 }
 
 args=()
