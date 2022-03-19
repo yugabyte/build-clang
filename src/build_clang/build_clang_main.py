@@ -392,7 +392,8 @@ class ClangBuildStage:
                 # So, simply speaking, this enables the use of lld for building LLVM.
                 vars['LLVM_ENABLE_LLD'] = True
 
-            if (sys_detection.is_linux() and
+            if (self.stage_number >= 3 and
+                    sys_detection.is_linux() and
                     sys_detection.local_sys_conf().short_os_name_and_version() == 'amzn2' and
                     platform.machine() == 'aarch64'):
                 # This turned out to be necessary for the stage 3 build on Amazon Linux 2 on
