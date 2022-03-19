@@ -392,6 +392,14 @@ class ClangBuildStage:
                 # So, simply speaking, this enables the use of lld for building LLVM.
                 vars['LLVM_ENABLE_LLD'] = True
 
+            if (sys_detection.is_linux() and
+                    sys_detection.local_sys_conf().short_os_name_and_version() == 'amzn2' and
+                    platform.machine() == 'aarch64'):
+                # This turned out to be necessary for the stage 3 build on Amazon Linux 2 on
+                # aarch64. Without this we get a linking error on the UBSAN runtime library.
+                # https://gist.githubusercontent.com/mbautin/508849414af633b9839c27b338b04afe/raw
+                extra_linker_flags.append('-lc++')
+
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
                 CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
@@ -450,11 +458,11 @@ class ClangBuildStage:
         assert cxx_compiler is not None
         return c_compiler, cxx_compiler
 
-    def _run_ninja(self, *args: List[str]) -> None:
-        ninja_args = ['ninja']
+    def _run_ninja(self, args: List[str] = []) -> None:
+        ninja_args: List[str] = ['ninja']
         if self.build_conf.parallelism:
             ninja_args.append('-j%d' % self.build_conf.parallelism)
-        ninja_args += args
+        ninja_args.extend(args)
         run_cmd(ninja_args)
 
     def build(self) -> None:
@@ -494,16 +502,16 @@ class ClangBuildStage:
                 targets.append('clang')
                 for target in targets:
                     log_info_heading(stage_prefix + "Building target %s", target)
-                    self._run_ninja(target)
+                    self._run_ninja([target])
                 log_info_heading(stage_prefix + "Building all other targets")
                 self._run_ninja()
                 if self.is_last_stage:
                     for target in ['clangd', 'clangd-indexer']:
                         log_info_heading(stage_prefix + "Building target %s", target)
-                        self._run_ninja(target)
+                        self._run_ninja([target])
 
                 log_info_heading("Installing")
-                self._run_ninja('install')
+                self._run_ninja(['install'])
                 if self.is_last_stage:
                     # This file is not installed by "ninja install" so copy it manually.
                     # TODO: clean up code repetition.
@@ -684,7 +692,7 @@ class ClangBuilder:
 
             repo = git.Repo(existing_src_dir)
             # From https://stackoverflow.com/questions/34932306/get-tags-of-a-commit
-            # Also relevant: 
+            # Also relevant:
             # https://stackoverflow.com/questions/32523121/gitpython-get-current-tag-detached-head
             for tag in repo.tags:
                 tag_commit = repo.commit(tag)
@@ -706,7 +714,7 @@ class ClangBuilder:
 
         if GIT_SHA1_PLACEHOLDER_STR_WITH_SEPARATORS in os.path.basename(
                 os.path.dirname(os.path.dirname(llvm_project_src_path))):
-            def remove_dir_with_placeholder_in_name():
+            def remove_dir_with_placeholder_in_name() -> None:
                 if os.path.exists(llvm_project_src_path):
                     logging.info("Removing directory %s", llvm_project_src_path)
                     subprocess.call(['rm', '-rf', llvm_project_src_path])
