@@ -74,7 +74,7 @@ LLVM_VERSION_MAP = {
     '11': '11.1.0-yb-1',
     '12': '12.0.1-yb-1',
     '13': '13.0.1-yb-1',
-    '14': '14.0.1',
+    '14': '14.0.3',
 }
 
 
@@ -100,7 +100,7 @@ def activate_devtoolset() -> None:
     devtoolset_env_str = subprocess.check_output(
         ['bash', '-c', '. /opt/rh/devtoolset-8/enable && env']).decode('utf-8')
 
-    for line in devtoolset_env_str.split("\n"):
+    for line in d evtoolset_env_str.split("\n"):
         line = line.strip()
         if not line:
             continue
