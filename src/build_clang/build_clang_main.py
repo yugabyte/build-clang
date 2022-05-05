@@ -100,7 +100,7 @@ def activate_devtoolset() -> None:
     devtoolset_env_str = subprocess.check_output(
         ['bash', '-c', '. /opt/rh/devtoolset-8/enable && env']).decode('utf-8')
 
-    for line in d evtoolset_env_str.split("\n"):
+    for line in devtoolset_env_str.split("\n"):
         line = line.strip()
         if not line:
             continue
