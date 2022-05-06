@@ -430,7 +430,9 @@ class ClangBuildStage:
                 LLVM_ENABLE_LIBCXX=True,
                 # We only switch to compiler-rt as the default runtime library for the third stage,
                 # even though we build it for the second stage as well.
-                CLANG_DEFAULT_RTLIB='compiler-rt'
+                CLANG_DEFAULT_RTLIB='compiler-rt',
+                LLVM_STATIC_LINK_CXX_STDLIB=True,
+                LLVM_ENABLE_LTO='Full',
             )
 
         if self.build_conf.use_compiler_wrapper:
