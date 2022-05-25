@@ -14,6 +14,7 @@ import shlex
 import git
 import atexit
 
+from sys_detection import is_linux, is_macos
 from typing import Any, Optional, Dict, List, Tuple, Union
 
 from build_clang import remote_build
@@ -93,7 +94,7 @@ def to_cmake_option(v: Union[bool, str]) -> str:
 
 
 def activate_devtoolset() -> None:
-    if (not sys_detection.is_linux() or
+    if (not is_linux() or
             sys_detection.local_sys_conf().short_os_name_and_version() != 'centos7'):
         return
 
@@ -322,8 +323,11 @@ class ClangBuildStage:
         if self.is_last_stage:
             # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
-            if self.build_conf.llvm_major_version >= 10:
+            if (self.build_conf.llvm_major_version >= 10 and
+                not (self.build_conf.llvm_major_version >= 13 and is_macos())):
                 # There were some issues building lldb for LLVM 9 and older.
+                # Also, LLVM 14.0.3's LLDB does not build cleanly on macOS in my experience.
+                # https://gist.githubusercontent.com/mbautin/a17fa5087e651d4b7d16c27ea6fb80ed/raw
                 enabled_projects.append('lldb')
         return sorted(enabled_projects)
 
