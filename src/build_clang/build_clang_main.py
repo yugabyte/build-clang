@@ -251,6 +251,10 @@ def make_file_executable(file_path: str) -> None:
     os.chmod(file_path, current_stat.st_mode | stat.S_IXUSR)
 
 
+def get_rpath_flag(rpath_dir: str) -> str:
+    return f'-Wl,-rpath={rpath_dir}'
+
+
 class ClangBuildStage:
     # Build configuration. The same for all stages.
     build_conf: ClangBuildConf
@@ -325,7 +329,7 @@ class ClangBuildStage:
             # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
             if (self.build_conf.llvm_major_version >= 10 and
-                not (self.build_conf.llvm_major_version >= 13 and is_macos())):
+                    not (self.build_conf.llvm_major_version >= 13 and is_macos())):
                 # There were some issues building lldb for LLVM 9 and older.
                 # Also, LLVM 14.0.3's LLDB does not build cleanly on macOS in my experience.
                 # https://gist.githubusercontent.com/mbautin/a17fa5087e651d4b7d16c27ea6fb80ed/raw
@@ -406,6 +410,14 @@ class ClangBuildStage:
                 # aarch64. Without this we get a linking error on the UBSAN runtime library.
                 # https://gist.githubusercontent.com/mbautin/508849414af633b9839c27b338b04afe/raw
                 extra_linker_flags.append('-lc++')
+
+            if (self.stage_number >= 3 and
+                    sys_detection.is_linux() and
+                    self.build_conf.llvm_major_version >= 15):
+                # Clang 15 build system does not set up rpath properly, and even the tblgen step
+                # fails to find libc++.
+                os_specific_subdir = f'{platform.machine()}-unknown-linux-gnu'
+                extra_linker_flags.append(get_rpath_flag('$ORIGIN/../lib/{os_specific_subdir}'))
 
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
