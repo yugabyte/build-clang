@@ -606,7 +606,7 @@ class ClangBuilder:
             '--llvm_version',
             help='LLVM version to build, e.g. 12.0.1, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0, or '
                  'Yugabyte-specific tags with extra patches, such as 12.0.1-yb-1 or 11.1.0-yb-1.',
-            default='13.0.1-yb-1')
+            default='15')
         parser.add_argument(
             '--skip_auto_suffix',
             help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
