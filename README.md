@@ -1,7 +1,6 @@
 # build-clang
 
 A set of scripts to build and package LLVM/Clang to be used to build YugabyteDB code.
-Currently supports LLVM 10.0.1.
 
 # Links
 
