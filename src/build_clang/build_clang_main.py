@@ -647,7 +647,7 @@ class ClangBuilder:
         parser.add_argument(
             '--github_org',
             help='GitHub organization to use in the clone URL. Default: ' + DEFAULT_GITHUB_ORG,
-            deafult=DEFAULT_GITHUB_ORG
+            default=DEFAULT_GITHUB_ORG
         )
         self.args = parser.parse_args()
 
