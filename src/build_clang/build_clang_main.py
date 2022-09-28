@@ -39,7 +39,6 @@ from build_clang.helpers import (
 from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 
-LLVM_REPO_URL = 'https://github.com/yugabyte/llvm-project.git'
 NUM_STAGES = 3
 
 # Length of Git SHA1 prefix to be used in directory name.
@@ -78,6 +77,8 @@ LLVM_VERSION_MAP = {
     '14': '14.0.6-yb-1',
     '15': '15.0.0-yb-1'
 }
+
+DEFAULT_GITHUB_ORG = 'yugabyte'
 
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
@@ -643,6 +644,11 @@ class ClangBuilder:
             type=int,
             help='Set the parallelism level for Ninja builds'
         )
+        parser.add_argument(
+            '--github_org',
+            help='GitHub organization to use in the clone URL. Default: ' + DEFAULT_GITHUB_ORG,
+            deafult=DEFAULT_GITHUB_ORG
+        )
         self.args = parser.parse_args()
 
         if self.args.min_stage < 1:
@@ -704,6 +710,7 @@ class ClangBuilder:
         tag_we_want = 'llvmorg-%s' % self.build_conf.version
 
         existing_dir_to_use: Optional[str] = None
+        llvm_repo_url = f'https://github.com/{self.args.github_org}/llvm-project.git'
         for existing_src_dir in existing_src_dirs:
             existing_src_dir = existing_src_dir.strip()
             if not existing_src_dir:
@@ -720,8 +727,8 @@ class ClangBuilder:
                 tag_commit = repo.commit(tag)
                 if tag_commit.hexsha == repo.head.commit.hexsha:
                     logging.info(
-                        "Found tag %s in %s matching the head SHA1 %s",
-                        tag.name, existing_src_dir, repo.head.commit.hexsha)
+                        f"Found tag {tag.name} in {existing_src_dir} "
+                        f"matching the head SHA1 {repo.head.commit.hexsha}")
                     if tag.name == tag_we_want:
                         existing_dir_to_use = existing_src_dir
                         logging.info(
@@ -732,7 +739,7 @@ class ClangBuilder:
                 break
         if not existing_dir_to_use:
             logging.info("Did not find an existing checkout of tag %s, will clone %s",
-                         tag_we_want, LLVM_REPO_URL)
+                         tag_we_want, llvm_repo_url)
 
         if GIT_SHA1_PLACEHOLDER_STR_WITH_SEPARATORS in os.path.basename(
                 os.path.dirname(os.path.dirname(llvm_project_src_path))):
@@ -746,7 +753,7 @@ class ClangBuilder:
             atexit.register(remove_dir_with_placeholder_in_name)
 
         git_clone_tag(
-            LLVM_REPO_URL if existing_dir_to_use is None else existing_dir_to_use,
+            llvm_repo_url if existing_dir_to_use is None else existing_dir_to_use,
             tag_we_want,
             llvm_project_src_path)
 
