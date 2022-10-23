@@ -148,7 +148,6 @@ class ClangBuildConf:
             skip_auto_suffix: bool,
             clean_build: bool,
             use_compiler_wrapper: bool,
-            lto: bool,
             use_compiler_rt: bool,
             existing_build_dir: Optional[str],
             parallelism: Optional[int]) -> None:
@@ -166,9 +165,6 @@ class ClangBuildConf:
         self.build_start_timestamp_str = get_current_timestamp_str()
         self.use_compiler_wrapper = use_compiler_wrapper
         self.use_compiler_rt = use_compiler_rt
-
-        # We store some information about how LLVM was built
-        self.lto = lto
 
         self.unix_timestamp_for_suffix = None
 
@@ -278,13 +274,15 @@ class ClangBuildStage:
     stage_start_timestamp_str: Optional[str]
 
     is_last_stage: bool
+    lto: bool
 
     def __init__(
             self,
             build_conf: ClangBuildConf,
             stage_number: int,
             prev_stage: Optional['ClangBuildStage'],
-            is_last_stage: bool) -> None:
+            is_last_stage: bool,
+            lto: bool) -> None:
         # Fields based directly on the parameters.
         self.build_conf = build_conf
         self.stage_number = stage_number
@@ -307,6 +305,10 @@ class ClangBuildStage:
             self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
         self.stage_start_timestamp_str = None
         self.is_last_stage = is_last_stage
+        self.lto = lto
+        # In LTO mode, we create two "last stages", with and without LTO.
+        if self.lto:
+            assert(self.is_last_stage)
 
     def is_first_stage(self) -> bool:
         return self.prev_stage is None
@@ -326,7 +328,7 @@ class ClangBuildStage:
                 libcxx
                 libcxxabi
             """)
-        if self.is_last_stage:
+        if self.is_last_stage and not self.lto:
             # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
             if (self.build_conf.llvm_major_version >= 10 and
@@ -434,8 +436,9 @@ class ClangBuildStage:
                 # We only need tests at the last stage because that's where we build clangd-indexer.
                 vars['LLVM_BUILD_TESTS'] = True
 
-            if self.build_conf.lto and self.is_last_stage:
+            if self.lto and self.is_last_stage:
                 vars.update(LLVM_ENABLE_LTO='Full')
+                vars.update(BUILD_SHARED_LIBS=False)
 
         # =========================================================================================
         # Stage 3
@@ -678,22 +681,25 @@ class ClangBuilder:
             skip_auto_suffix=self.args.skip_auto_suffix,
             clean_build=self.args.clean,
             use_compiler_wrapper=self.args.use_compiler_wrapper,
-            lto=self.args.lto,
             use_compiler_rt=not self.args.no_compiler_rt,
             existing_build_dir=self.args.existing_build_dir,
             parallelism=self.args.parallelism
         )
 
     def init_stages(self) -> None:
-        prev_stage: Optional[ClangBuildStage] = None
         for stage_number in range(1, NUM_STAGES + 1):
-            self.stages.append(ClangBuildStage(
-                build_conf=self.build_conf,
-                stage_number=stage_number,
-                prev_stage=prev_stage,
-                is_last_stage=(stage_number == NUM_STAGES)
-            ))
-            prev_stage = self.stages[-1]
+            lto_values = [False]
+            if stage_number == NUM_STAGES and self.args.lto:
+                lto_values.append(True)
+
+            for lto in lto_values:
+                self.stages.append(ClangBuildStage(
+                    build_conf=self.build_conf,
+                    stage_number=stage_number,
+                    prev_stage=self.stages[-1] if self.stages else None,
+                    is_last_stage=(stage_number == NUM_STAGES),
+                    lto=lto
+                ))
 
     def clone_llvm_source_code(self) -> None:
         llvm_project_src_path = self.build_conf.get_llvm_project_clone_dir()
