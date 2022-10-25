@@ -288,7 +288,8 @@ class ClangBuildStage:
         self.stage_number = stage_number
         self.prev_stage = prev_stage
         if self.prev_stage is not None:
-            assert self.prev_stage.stage_number != self.stage_number
+            assert self.prev_stage.stage_number != self.stage_number, \
+                f"Previous stage is the same as the current stage: {self.stage_number}"
 
         parent_dir_for_llvm_version = self.build_conf.get_llvm_build_parent_dir()
 
@@ -652,6 +653,10 @@ class ClangBuilder:
             help='GitHub organization to use in the clone URL. Default: ' + DEFAULT_GITHUB_ORG,
             default=DEFAULT_GITHUB_ORG
         )
+        parser.add_argument(
+            '--skip_upload',
+            help='Skip package upload',
+            action='store_true')
         self.args = parser.parse_args()
 
         if self.args.min_stage < 1:
@@ -687,6 +692,7 @@ class ClangBuilder:
         )
 
     def init_stages(self) -> None:
+        effective_stage_number = 1
         for stage_number in range(1, NUM_STAGES + 1):
             lto_values = [False]
             if stage_number == NUM_STAGES and self.args.lto:
@@ -695,11 +701,12 @@ class ClangBuilder:
             for lto in lto_values:
                 self.stages.append(ClangBuildStage(
                     build_conf=self.build_conf,
-                    stage_number=stage_number,
+                    stage_number=effective_stage_number,
                     prev_stage=self.stages[-1] if self.stages else None,
                     is_last_stage=(stage_number == NUM_STAGES),
                     lto=lto
                 ))
+                effective_stage_number += 1
 
     def clone_llvm_source_code(self) -> None:
         llvm_project_src_path = self.build_conf.get_llvm_project_clone_dir()
@@ -809,8 +816,11 @@ class ClangBuilder:
 
             self.init_stages()
 
+            effective_max_stage = self.args.max_stage
+            if self.args.lto:
+                effective_max_stage = NUM_STAGES + 1
             for stage in self.stages:
-                if self.args.min_stage <= stage.stage_number <= self.args.max_stage:
+                if self.args.min_stage <= stage.stage_number <= effective_max_stage:
                     stage_start_time_sec = time.time()
                     logging.info("Building stage %d", stage.stage_number)
                     stage.build()
@@ -848,6 +858,10 @@ class ClangBuilder:
 
         assert final_install_dir_basename.startswith(YB_LLVM_ARCHIVE_NAME_PREFIX)
         tag = final_install_dir_basename[len(YB_LLVM_ARCHIVE_NAME_PREFIX):]
+
+        if self.args.skip_upload:
+            logging.info("Skipping upload")
+            return
 
         github_token_path = os.path.expanduser('~/.github-token')
         if os.path.exists(github_token_path) and not os.getenv('GITHUB_TOKEN'):
