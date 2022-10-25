@@ -437,7 +437,7 @@ class ClangBuildStage:
                 # We only need tests at the last stage because that's where we build clangd-indexer.
                 vars['LLVM_BUILD_TESTS'] = True
 
-            if self.lto and self.is_last_non_lto_stage:
+            if self.lto:
                 vars.update(LLVM_ENABLE_LTO='Full')
                 vars.update(BUILD_SHARED_LIBS=False)
 
