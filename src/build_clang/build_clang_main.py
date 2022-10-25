@@ -309,7 +309,7 @@ class ClangBuildStage:
         self.lto = lto
         # In LTO mode, we create two "last stages", with and without LTO.
         if self.lto:
-            assert(self.is_last_non_lto_stage)
+            assert(not self.is_last_non_lto_stage)
 
     def is_first_stage(self) -> bool:
         return self.prev_stage is None
