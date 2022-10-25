@@ -39,7 +39,7 @@ from build_clang.helpers import (
 from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 
 
-NUM_STAGES = 3
+NUM_NON_LTO_STAGES = 3
 
 # Length of Git SHA1 prefix to be used in directory name.
 GIT_SHA1_PREFIX_LENGTH = 8
@@ -273,7 +273,7 @@ class ClangBuildStage:
     # We set this when we start building the stage.
     stage_start_timestamp_str: Optional[str]
 
-    is_last_stage: bool
+    is_last_non_lto_stage: bool
     lto: bool
 
     def __init__(
@@ -281,7 +281,7 @@ class ClangBuildStage:
             build_conf: ClangBuildConf,
             stage_number: int,
             prev_stage: Optional['ClangBuildStage'],
-            is_last_stage: bool,
+            is_last_non_lto_stage: bool,
             lto: bool) -> None:
         # Fields based directly on the parameters.
         self.build_conf = build_conf
@@ -300,16 +300,16 @@ class ClangBuildStage:
 
         self.compiler_invocations_top_dir = os.path.join(
             self.stage_base_dir, 'compiler_invocations')
-        if is_last_stage:
+        if is_last_non_lto_stage:
             self.install_prefix = self.build_conf.get_final_install_dir()
         else:
             self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
         self.stage_start_timestamp_str = None
-        self.is_last_stage = is_last_stage
+        self.is_last_non_lto_stage = is_last_non_lto_stage
         self.lto = lto
         # In LTO mode, we create two "last stages", with and without LTO.
         if self.lto:
-            assert(self.is_last_stage)
+            assert(self.is_last_non_lto_stage)
 
     def is_first_stage(self) -> bool:
         return self.prev_stage is None
@@ -329,7 +329,7 @@ class ClangBuildStage:
                 libcxx
                 libcxxabi
             """)
-        if self.is_last_stage and not self.lto:
+        if self.is_last_non_lto_stage and not self.lto:
             # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
             if (self.build_conf.llvm_major_version >= 10 and
@@ -433,11 +433,11 @@ class ClangBuildStage:
                 CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags_str,
             )
 
-            if self.is_last_stage:
+            if self.is_last_non_lto_stage:
                 # We only need tests at the last stage because that's where we build clangd-indexer.
                 vars['LLVM_BUILD_TESTS'] = True
 
-            if self.lto and self.is_last_stage:
+            if self.lto and self.is_last_non_lto_stage:
                 vars.update(LLVM_ENABLE_LTO='Full')
                 vars.update(BUILD_SHARED_LIBS=False)
 
@@ -532,14 +532,14 @@ class ClangBuildStage:
                     self._run_ninja([target])
                 log_info_heading(stage_prefix + "Building all other targets")
                 self._run_ninja()
-                if self.is_last_stage:
+                if self.is_last_non_lto_stage:
                     for target in ['clangd', 'clangd-indexer']:
                         log_info_heading(stage_prefix + "Building target %s", target)
                         self._run_ninja([target])
 
                 log_info_heading("Installing")
                 self._run_ninja(['install'])
-                if self.is_last_stage:
+                if self.is_last_non_lto_stage:
                     # This file is not installed by "ninja install" so copy it manually.
                     # TODO: clean up code repetition.
                     binary_rel_path = 'bin/clangd-indexer'
@@ -602,7 +602,7 @@ class ClangBuilder:
         parser.add_argument(
             '--max_stage',
             type=int,
-            default=NUM_STAGES,
+            default=NUM_NON_LTO_STAGES,
             help='Last stage to build')
         parser.add_argument(
             '--top_dir_suffix',
@@ -661,7 +661,7 @@ class ClangBuilder:
 
         if self.args.min_stage < 1:
             raise ValueError("--min-stage value too low: %d" % self.args.min_stage)
-        if self.args.max_stage > NUM_STAGES:
+        if self.args.max_stage > NUM_NON_LTO_STAGES:
             raise ValueError("--max-stage value too high: %d" % self.args.max_stage)
         if self.args.min_stage > self.args.max_stage:
             raise ValueError(
@@ -693,9 +693,9 @@ class ClangBuilder:
 
     def init_stages(self) -> None:
         effective_stage_number = 1
-        for stage_number in range(1, NUM_STAGES + 1):
+        for stage_number in range(1, NUM_NON_LTO_STAGES + 1):
             lto_values = [False]
-            if stage_number == NUM_STAGES and self.args.lto:
+            if stage_number == NUM_NON_LTO_STAGES and self.args.lto:
                 lto_values.append(True)
 
             for lto in lto_values:
@@ -703,7 +703,7 @@ class ClangBuilder:
                     build_conf=self.build_conf,
                     stage_number=effective_stage_number,
                     prev_stage=self.stages[-1] if self.stages else None,
-                    is_last_stage=(stage_number == NUM_STAGES),
+                    is_last_non_lto_stage=(stage_number == NUM_NON_LTO_STAGES) and not lto,
                     lto=lto
                 ))
                 effective_stage_number += 1
@@ -818,7 +818,7 @@ class ClangBuilder:
 
             effective_max_stage = self.args.max_stage
             if self.args.lto:
-                effective_max_stage = NUM_STAGES + 1
+                effective_max_stage = NUM_NON_LTO_STAGES + 1
             for stage in self.stages:
                 if self.args.min_stage <= stage.stage_number <= effective_max_stage:
                     stage_start_time_sec = time.time()
