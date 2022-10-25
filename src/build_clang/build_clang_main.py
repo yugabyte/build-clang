@@ -572,6 +572,11 @@ class ClangBuilder:
     def __init__(self) -> None:
         self.stages = []
 
+    def get_max_allowed_stage(self) -> int:
+        if self.args.lto:
+            return NUM_NON_LTO_STAGES + 1
+        return NUM_NON_LTO_STAGES
+
     def parse_args(self) -> None:
         parser = argparse.ArgumentParser(description='Build Clang')
         parser.add_argument(
@@ -602,7 +607,7 @@ class ClangBuilder:
         parser.add_argument(
             '--max_stage',
             type=int,
-            default=NUM_NON_LTO_STAGES,
+            default=None,
             help='Last stage to build')
         parser.add_argument(
             '--top_dir_suffix',
@@ -659,9 +664,12 @@ class ClangBuilder:
             action='store_true')
         self.args = parser.parse_args()
 
+        max_allowed_stage = self.get_max_allowed_stage()
+        if self.args.max_stage is None:
+            self.args.max_stage = max_allowed_stage
         if self.args.min_stage < 1:
             raise ValueError("--min-stage value too low: %d" % self.args.min_stage)
-        if self.args.max_stage > NUM_NON_LTO_STAGES:
+        if self.args.max_stage > max_allowed_stage:
             raise ValueError("--max-stage value too high: %d" % self.args.max_stage)
         if self.args.min_stage > self.args.max_stage:
             raise ValueError(
