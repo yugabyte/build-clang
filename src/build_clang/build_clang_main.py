@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from gettext import bind_textdomain_codeset
 import sys
 import argparse
 import subprocess
@@ -506,6 +507,18 @@ class ClangBuildStage:
         logging.info(self.get_log_prefix() + msg, *args)
 
     def install_binary_to_final_dir(self, binary_name: str) -> None:
+        # This is needed because "clang" is a link to "clang-<version>".
+        src_path = os.path.join(self.cmake_build_dir, 'bin', binary_name)
+        if not os.path.exists(src_path):
+            raise IOError("File does not exist: %s" % src_path)
+        if os.path.islink(src_path):
+            link_target = os.readlink(src_path)
+            link_basename = os.path.basename(link_target)
+            logging.info(
+                "%s is a link to %s, using binary name %s instead",
+                binary_name, link_target, link_basename)
+            binary_name = link_basename
+
         binary_rel_path = os.path.join('bin', binary_name)
         src_path = os.path.join(self.cmake_build_dir, binary_rel_path)
         dst_path = os.path.join(self.build_conf.get_final_install_dir(), binary_rel_path)
