@@ -13,6 +13,7 @@ import sys_detection
 import shlex
 import git
 import atexit
+import shutil
 
 from sys_detection import is_linux, is_macos
 from typing import Any, Optional, Dict, List, Tuple, Union
@@ -442,7 +443,7 @@ class ClangBuildStage:
                 vars.update(BUILD_SHARED_LIBS=False)
 
         # =========================================================================================
-        # Stage 3
+        # Stage 3 (non-LTO) and 4 (LTO)
         # =========================================================================================
 
         # The description of SANITIZER_ALLOW_CXXABI is "Allow use of C++ ABI details in ubsan".
@@ -492,11 +493,30 @@ class ClangBuildStage:
         ninja_args.extend(args)
         run_cmd(ninja_args)
 
+    def get_log_prefix(self) -> str:
+        return '[Stage %d%s] ' % (
+            self.stage_number,
+            ' (LTO)' if self.lto else ''
+        )
+
+    def log_info_heading(self, heading: str, *args: Any) -> None:
+        log_info_heading(self.get_log_prefix() + heading, *args)
+
+    def log_info(self, msg: str, *args: Any) -> None:
+        logging.info(self.get_log_prefix() + msg, *args)
+
+    def install_binary_to_final_dir(self, binary_name: str) -> None:
+        binary_rel_path = os.path.join('bin', binary_name)
+        src_path = os.path.join(self.cmake_build_dir, binary_rel_path)
+        dst_path = os.path.join(self.build_conf.get_final_install_dir(), binary_rel_path)
+        self.log_info("Copying file %s to %s", src_path, dst_path)
+        shutil.copyfile(src_path, dst_path)
+        make_file_executable(dst_path)
+
     def build(self) -> None:
-        stage_prefix = '[Stage %d] ' % self.stage_number
         self.stage_start_timestamp_str = get_current_timestamp_str()
         if os.path.exists(self.cmake_build_dir) and self.build_conf.clean_build:
-            logging.info(stage_prefix + "Deleting directory: %s", self.cmake_build_dir)
+            self.log_info("Deleting directory: %s", self.cmake_build_dir)
             rm_rf(self.cmake_build_dir)
 
         c_compiler, cxx_compiler = self.get_compilers()
@@ -528,33 +548,35 @@ class ClangBuildStage:
                     targets = ['compiler-rt', 'cxxabi', 'cxx'] + targets
                 targets.append('clang')
                 for target in targets:
-                    log_info_heading(stage_prefix + "Building target %s", target)
+                    self.log_info_heading("Building target %s", target)
                     self._run_ninja([target])
-                log_info_heading(stage_prefix + "Building all other targets")
-                self._run_ninja()
-                if self.is_last_non_lto_stage:
-                    for target in ['clangd', 'clangd-indexer']:
-                        log_info_heading(stage_prefix + "Building target %s", target)
-                        self._run_ninja([target])
+                self.log_info_heading("Building all other targets")
+                if self.lto:
+                    lto_binaries = ['clang', 'lld']
+                    self.log_info("Building LTO binaries: %s", lto_binaries)
+                    self._run_ninja(lto_binaries)
+                    self.log_info("Installing LTO binaries: %s", lto_binaries)
+                    for lto_binary_name in lto_binaries:
+                        self.install_binary_to_final_dir(lto_binary_name)
+                else:
+                    self._run_ninja()
+                    if self.is_last_non_lto_stage:
+                        for target in ['clangd', 'clangd-indexer']:
+                            self.log_info_heading("Building target %s", target)
+                            self._run_ninja([target])
 
-                log_info_heading("Installing")
-                self._run_ninja(['install'])
-                if self.is_last_non_lto_stage:
-                    # This file is not installed by "ninja install" so copy it manually.
-                    # TODO: clean up code repetition.
-                    binary_rel_path = 'bin/clangd-indexer'
-                    src_path = os.path.join(self.cmake_build_dir, binary_rel_path)
-                    dst_path = os.path.join(self.install_prefix, binary_rel_path)
-                    logging.info(stage_prefix + "Copying file %s to %s", src_path, dst_path)
-                    shutil.copyfile(src_path, dst_path)
-                    make_file_executable(dst_path)
+                    log_info_heading("Installing")
+                    self._run_ninja(['install'])
+                    if self.is_last_non_lto_stage:
+                        # This file is not installed by "ninja install" so copy it manually.
+                        self.install_binary_to_final_dir('clangd-indexer')
 
-                    for file_name in ['CMakeCache.txt', 'compile_commands.json']:
-                        src_path = os.path.join(self.cmake_build_dir, file_name)
-                        dst_path = os.path.join(
-                            self.build_conf.get_llvm_build_info_dir(), file_name)
-                        logging.info(stage_prefix + "Copying file %s to %s", src_path, dst_path)
-                        shutil.copyfile(src_path, dst_path)
+                        for file_name in ['CMakeCache.txt', 'compile_commands.json']:
+                            src_path = os.path.join(self.cmake_build_dir, file_name)
+                            dst_path = os.path.join(
+                                self.build_conf.get_llvm_build_info_dir(), file_name)
+                            self.log_info("Copying file %s to %s", src_path, dst_path)
+                            shutil.copyfile(src_path, dst_path)
 
     def check_dynamic_libraries(self) -> None:
         for root, dirs, files in os.walk(self.install_prefix):
