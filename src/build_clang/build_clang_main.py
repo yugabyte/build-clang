@@ -899,8 +899,12 @@ class ClangBuilder:
                 cwd=final_install_parent_dir,
             )
 
-        sha256sum_output = subprocess.check_output(
-            ['sha256sum', archive_path]).decode('utf-8')
+        if is_macos():
+            sha_sum_cmd_line = ['shasum', '-a', '256']
+        else:
+            sha_sum_cmd_line = ['sha256sum']
+        sha_sum_cmd_line.append(archive_path)
+        sha256sum_output = subprocess.check_output(sha_sum_cmd_line).decode('utf-8')
         sha256sum_file_path = archive_path + '.sha256'
         with open(sha256sum_file_path, 'w') as sha256sum_file:
             sha256sum_file.write(sha256sum_output)
