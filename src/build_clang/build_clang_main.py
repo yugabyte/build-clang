@@ -372,6 +372,12 @@ class ClangBuildStage:
 
             LLVM_ENABLE_RTTI=True,
         )
+        if is_macos():
+            vars.update(
+                COMPILER_RT_ENABLE_IOS=False,
+                COMPILER_RT_ENABLE_WATCHOS=False,
+                COMPILER_RT_ENABLE_TVOS=False,
+            )
 
         if self.stage_number >= 3 and use_compiler_rt:
             # For the first stage, we don't even build compiler-rt.
@@ -389,7 +395,7 @@ class ClangBuildStage:
             vars['LIBCXXABI_USE_LLVM_UNWINDER'] = True
 
             extra_linker_flags = []
-            if sys.platform != 'darwin':
+            if is_linux():
                 if self.build_conf.use_compiler_rt:
                     extra_linker_flags.append(
                         # To avoid depending on libgcc.a when using Clang's runtime library
@@ -409,7 +415,7 @@ class ClangBuildStage:
                 vars['LLVM_ENABLE_LLD'] = True
 
             if (self.stage_number >= 3 and
-                    sys_detection.is_linux() and
+                    is_linux() and
                     sys_detection.local_sys_conf().short_os_name_and_version() == 'amzn2' and
                     platform.machine() == 'aarch64'):
                 # This turned out to be necessary for the stage 3 build on Amazon Linux 2 on
@@ -418,7 +424,7 @@ class ClangBuildStage:
                 extra_linker_flags.append('-lc++')
 
             if (self.stage_number >= 3 and
-                    sys_detection.is_linux() and
+                    is_linux() and
                     self.build_conf.llvm_major_version >= 15):
                 # Clang 15 build system does not set up rpath properly, and even the tblgen step
                 # fails to find libc++.
