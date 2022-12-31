@@ -671,7 +671,13 @@ class ClangBuilder:
         parser.add_argument(
             '--lto',
             action='store_true',
-            help='Use link-time optimization for the final stage of the build.')
+            default=None,
+            help='Use link-time optimization for the final stage of the build (default on Linux)')
+        parser.add_argument(
+            '--no-lto',
+            dest='lto',
+            action='store_false',
+            help='The opposite of --lto (LTO is disabled by default on macOS)')
         parser.add_argument(
             '--upload_earlier_build',
             help='Upload earlier build specified by this path. This is useful for debugging '
@@ -727,6 +733,15 @@ class ClangBuilder:
             logging.info("Automatically substituting LLVM version %s for %s",
                          adjusted_llvm_version, self.args.llvm_version)
         self.args.llvm_version = adjusted_llvm_version
+
+        if self.args.lto is None:
+            if is_linux():
+                logging.info("Enabling LTO by default on Linux")
+                self.args.lto = True
+            else:
+                logging.info("Disabling LTO by default on a non-Linux system")
+                self.args.lto = False
+        logging.info("LTO enabled: %s" % self.args.lto)
 
         self.build_conf = ClangBuildConf(
             install_parent_dir=self.args.install_parent_dir,
@@ -926,7 +941,7 @@ class ClangBuilder:
             'hub',
             'release',
             'create', tag,
-            '-m', 'Release %s' % tag,
+            '-m', 'Release %s (LTO %s)' % (tag, 'enabled' if self.args.lto else 'disabled'),
             '-a', archive_path,
             '-a', sha256sum_file_path,
             # '-t', ...
