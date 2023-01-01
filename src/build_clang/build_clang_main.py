@@ -102,8 +102,16 @@ def activate_devtoolset() -> None:
             sys_detection.local_sys_conf().short_os_name_and_version() != 'centos7'):
         return
 
+    found = False
+    for devtoolset_number in [11, 10, 9]:
+        enable_script_path = f'/opt/rh/devtoolset-{devtoolset_number}/enable'
+        if os.path.exists(enable_script_path):
+            found = True
+            break
+    if not found:
+        raise ValueError("Could not find an acceptable devtoolset")
     devtoolset_env_str = subprocess.check_output(
-        ['bash', '-c', '. /opt/rh/devtoolset-10/enable && env']).decode('utf-8')
+        ['bash', '-c', f'. {enable_script_path} && env']).decode('utf-8')
 
     for line in devtoolset_env_str.split("\n"):
         line = line.strip()
