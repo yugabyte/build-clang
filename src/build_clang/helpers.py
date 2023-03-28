@@ -5,8 +5,10 @@ import pathlib
 import hashlib
 import time
 import shlex
+import stat
 
-from typing import List, Any, Dict, Optional
+
+from typing import List, Any, Dict, Optional, Union
 from datetime import datetime
 
 
@@ -180,3 +182,29 @@ def base36timestamp(max_len: int = 7) -> str:
     s = base36encode(int_time)
     assert len(s) <= max_len
     return '0' * (max_len - len(s)) + s
+
+
+def get_rpath_flag(rpath_dir: str) -> str:
+    return f'-Wl,-rpath={rpath_dir}'
+
+
+def to_cmake_option(v: Union[bool, str]) -> str:
+    if isinstance(v, str):
+        return v
+    if v is True:
+        return 'ON'
+    if v is False:
+        return 'OFF'
+    raise ValueError("Cannot convert to a CMake option value: %s" % v)
+
+
+def make_file_executable(file_path: str) -> None:
+    """
+    Makes the given file executable by owner.
+    """
+    current_stat = os.stat(file_path)
+    os.chmod(file_path, current_stat.st_mode | stat.S_IXUSR)
+
+
+def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
+    return ['-D%s=%s' % (k, v) for (k, v) in vars.items()]
