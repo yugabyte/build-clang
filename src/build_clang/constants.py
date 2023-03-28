@@ -43,3 +43,6 @@ LLVM_VERSION_MAP = {
 }
 
 DEFAULT_GITHUB_ORG = 'yugabyte'
+
+BUILD_CLANG_SCRIPTS_ROOT_PATH = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
