@@ -325,12 +325,17 @@ class ClangBuildStage:
     def is_first_stage(self) -> bool:
         return self.prev_stage is None
 
-    def get_llvm_enabled_projects(self) -> List[str]:
+    def get_enabled_runtimes(self) -> List[str]:
+        return ['libunwind']
+
+    def get_enabled_projects(self) -> List[str]:
         enabled_projects = multiline_str_to_list("""
             clang
-            libunwind
             lld
         """)
+        if self.build_conf.llvm_major_version <= 15:
+            enabled_projects += self.get_enabled_runtimes()
+
         if not self.is_first_stage():
             # For first stage, we don't build these projects because the bootstrap compiler
             # might not be able to compile them (e.g. GCC 8 is having trouble building libc++
@@ -370,7 +375,7 @@ class ClangBuildStage:
             vars['CLANG_DEFAULT_CXX_STDLIB'] = 'libc++'
 
         vars = dict(
-            LLVM_ENABLE_PROJECTS=';'.join(self.get_llvm_enabled_projects()),
+            LLVM_ENABLE_PROJECTS=';'.join(self.get_enabled_projects()),
             CMAKE_INSTALL_PREFIX=self.install_prefix,
             CMAKE_BUILD_TYPE='Release',
             LLVM_TARGETS_TO_BUILD='X86;AArch64',
@@ -381,6 +386,10 @@ class ClangBuildStage:
 
             LLVM_ENABLE_RTTI=True,
         )
+
+        if self.build_conf.llvm_major_version >= 16:
+            vars['LLVM_ENABLE_RUNTIMES'] = ';'.join(self.get_enabled_runtimes())
+
         if is_macos():
             vars.update(
                 COMPILER_RT_ENABLE_IOS=False,
