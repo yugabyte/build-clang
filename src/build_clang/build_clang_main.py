@@ -326,7 +326,13 @@ class ClangBuildStage:
         return self.prev_stage is None
 
     def get_enabled_runtimes(self) -> List[str]:
-        return ['libunwind']
+        runtimes = ['libunwind']
+        if not self.is_first_stage():
+            # For first stage, we don't build these runtimes because the bootstrap compiler
+            # might not be able to compile them (e.g. GCC 8 is having trouble building libc++
+            # from the LLVM 13 codebase).
+            runtimes.extend(['libcxx', 'libcxxabi', 'compiler-rt'])
+        return runtimes
 
     def get_enabled_projects(self) -> List[str]:
         enabled_projects = multiline_str_to_list("""
@@ -336,15 +342,6 @@ class ClangBuildStage:
         if self.build_conf.llvm_major_version <= 15:
             enabled_projects += self.get_enabled_runtimes()
 
-        if not self.is_first_stage():
-            # For first stage, we don't build these projects because the bootstrap compiler
-            # might not be able to compile them (e.g. GCC 8 is having trouble building libc++
-            # from the LLVM 13 codebase).
-            enabled_projects += multiline_str_to_list("""
-                compiler-rt
-                libcxx
-                libcxxabi
-            """)
         if self.is_last_non_lto_stage and not self.lto:
             # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
