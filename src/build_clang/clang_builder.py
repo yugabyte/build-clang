@@ -25,6 +25,7 @@ from build_clang.constants import (
 from build_clang.helpers import (
     mkdir_p,
     run_cmd,
+    get_major_version,
 )
 from build_clang.clang_build_stage import ClangBuildStage
 from build_clang.clang_build_conf import ClangBuildConf
@@ -180,10 +181,18 @@ class ClangBuilder:
                          adjusted_llvm_version, self.args.llvm_version)
         self.args.llvm_version = adjusted_llvm_version
 
+        llvm_major_version = get_major_version(self.args.llvm_version)
+
         if self.args.lto is None:
             if is_linux():
-                logging.info("Enabling LTO by default on Linux")
-                self.args.lto = True
+                if llvm_major_version >= 16:
+                    logging.info("Disabling LTO by default on Linux for LLVM major version %d",
+                                 llvm_major_version)
+                    self.args.lto = False
+                else:
+                    logging.info("Enabling LTO by default on Linux for LLVM major version %d",
+                                 llvm_major_version)
+                    self.args.lto = True
             else:
                 logging.info("Disabling LTO by default on a non-Linux system")
                 self.args.lto = False

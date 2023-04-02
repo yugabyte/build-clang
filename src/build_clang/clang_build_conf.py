@@ -8,6 +8,7 @@ from typing import Optional
 
 from build_clang.helpers import (
     get_current_timestamp_str,
+    get_major_version,
 )
 from build_clang.constants import (
     BUILD_DIR_SUFFIX_WITH_SEPARATOR,
@@ -59,7 +60,7 @@ class ClangBuildConf:
             parallelism: Optional[int]) -> None:
         self.install_parent_dir = install_parent_dir
         self.version = version
-        self.llvm_major_version = int(version.split('.')[0])
+        self.llvm_major_version = get_major_version(version)
         assert self.llvm_major_version >= 7
         self.user_specified_suffix = user_specified_suffix
         self.skip_auto_suffix = skip_auto_suffix

@@ -208,3 +208,11 @@ def make_file_executable(file_path: str) -> None:
 
 def cmake_vars_to_args(vars: Dict[str, str]) -> List[str]:
     return ['-D%s=%s' % (k, v) for (k, v) in vars.items()]
+
+
+def get_major_version(version: str) -> int:
+    """
+    >>> get_major_version("15.0.7")
+    15
+    """
+    return int(version.split('.')[0])
