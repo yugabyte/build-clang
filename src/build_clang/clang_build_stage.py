@@ -236,7 +236,7 @@ class ClangBuildStage:
                 vars.update(SANITIZER_COMMON_LINK_FLAGS=' '.join([
                     '-lc++abi',
                     '-lunwind'
-                ])
+                ]))
 
             if self.is_last_non_lto_stage:
                 # We only need tests at the last stage because that's where we build clangd-indexer.
