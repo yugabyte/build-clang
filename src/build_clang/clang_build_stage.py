@@ -235,7 +235,7 @@ class ClangBuildStage:
                     self.build_conf.llvm_major_version >= 16):
                 vars.update(
                     SANITIZER_COMMON_LINK_FLAGS=';'.join(['-lc++abi', '-lunwind']),
-                    SANITIZER_TEST_CXX_LIBRARIES='unwind'
+                    SANITIZER_TEST_CXX_LIBRARIES='-lunwind'
                 )
 
             if self.is_last_non_lto_stage:
