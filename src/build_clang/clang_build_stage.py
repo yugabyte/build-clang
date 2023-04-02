@@ -202,6 +202,7 @@ class ClangBuildStage:
                 # https://gist.githubusercontent.com/mbautin/508849414af633b9839c27b338b04afe/raw
                 extra_linker_flags.append('-lc++')
 
+            extra_rpath_flags = []
             if (self.stage_number >= 3 and
                     is_linux() and
                     self.build_conf.llvm_major_version >= 15):
@@ -210,15 +211,16 @@ class ClangBuildStage:
                 os_specific_lib_dir = f'lib/{platform.machine()}-unknown-linux-gnu'
                 # We need to escape the $ sign because otherwise $ORIGIN gets replaced by an
                 # empty string, probably deep in LLVM's CMake scripts.
-                extra_linker_flags.append(get_rpath_flag(rf'\$ORIGIN/../{os_specific_lib_dir}'))
+                extra_rpath_flags.append(get_rpath_flag(rf'\$ORIGIN/../{os_specific_lib_dir}'))
                 if self.build_conf.llvm_major_version >= 16:
                     prev_stage_num = self.stage_number - 1
                     # For Clang 16 on Linux, we also need to set rpath to allow finding libc++ from
                     # the previous stage. llvm-tblgen might fail to find libc++ otherwise.
-                    extra_linker_flags.append(get_rpath_flag(
+                    extra_rpath_flags.append(get_rpath_flag(
                         rf'\$ORIGIN/../../../stage-{prev_stage_num}/installed/{os_specific_lib_dir}'
                     ))
 
+            extra_linker_flags.extend(extra_rpath_flags)
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
                 CMAKE_SHARED_LINKER_FLAGS_INIT=extra_linker_flags_str,
@@ -228,7 +230,7 @@ class ClangBuildStage:
             if (self.stage_number >= 3 and
                     is_linux() and
                     self.build_conf.llvm_major_version >= 16):
-                vars.update(SANITIZER_COMMON_LINK_FLAGS=extra_linker_flags_str)
+                vars.update(SANITIZER_COMMON_LINK_FLAGS='-lc++abi')
 
             if self.is_last_non_lto_stage:
                 # We only need tests at the last stage because that's where we build clangd-indexer.
