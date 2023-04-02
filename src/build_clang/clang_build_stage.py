@@ -103,14 +103,17 @@ class ClangBuildStage:
             clang
             lld
         """)
-        if self.build_conf.llvm_major_version <= 15:
+        llvm_major_version = self.build_conf.llvm_major_version
+        if llvm_major_version <= 15:
             enabled_projects += self.get_enabled_runtimes()
 
         if self.is_last_non_lto_stage and not self.lto:
             # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
-            if (self.build_conf.llvm_major_version >= 10 and
-                    not (self.build_conf.llvm_major_version >= 13 and is_macos())):
+            if (llvm_major_version >= 10 and
+                    not (llvm_major_version >= 13 and is_macos()) and
+                    # See http://bit.ly/3nsVnmr for the LLVM 16 issue with building lldb.
+                    llvm_major_version != 16):
                 # There were some issues building lldb for LLVM 9 and older.
                 # Also, LLVM 14.0.3's LLDB does not build cleanly on macOS in my experience.
                 # https://gist.githubusercontent.com/mbautin/a17fa5087e651d4b7d16c27ea6fb80ed/raw
