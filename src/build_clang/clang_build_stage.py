@@ -358,7 +358,7 @@ class ClangBuildStage:
 
                 targets: List = []
                 if not self.is_first_stage():
-                    if self.build_conf.llvm_version >= 16:
+                    if self.build_conf.llvm_major_version >= 16:
                         # For LLVM 16, compiler-rt depends on c++abi.
                         targets = ['cxxabi', 'compiler-rt', 'cxx'] + targets
                     else:
