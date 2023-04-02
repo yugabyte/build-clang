@@ -30,6 +30,24 @@ from build_clang.clang_build_stage import ClangBuildStage
 from build_clang.clang_build_conf import ClangBuildConf
 from build_clang.git_helpers import git_clone_tag, get_current_git_sha1, save_git_log_to_file
 from build_clang import remote_build
+from build_clang.devtoolset import activate_devtoolset
+
+# TODO: automatically pull latest images from https://github.com/yugabyte/build-infra
+DOCKER_IMAGES = {
+    'x86_64': {
+        'almalinux8': 'yb_build_infra_almalinux8_x86_64:v2022-10-13T18_10_49',
+        'centos7': 'yb_build_infra_centos7_x86_64:v2022-10-13T18_10_48',
+        'ubuntu1804': 'yb_build_infra_ubuntu1804_x86_64:v2022-10-13T18_10_49',
+        'ubuntu2004': 'yb_build_infra_ubuntu2004_x86_64:v2022-10-13T18_10_48',
+        'ubuntu2204': 'yb_build_infra_ubuntu2204_x86_64:v2022-10-13T18_10_50',
+    },
+    'aarch64': {
+        'centos7': 'yb_build_infra_centos7_aarch64:v2022-10-13T18_12_26',
+        'almalinux8': 'yb_build_infra_almalinux8_aarch64:v2022-10-13T18_13_02',
+        'ubuntu2004': 'yb_build_infra_ubuntu2004_aarch64:v2022-10-13T18_13_18',
+        'ubuntu2204': 'yb_build_infra_ubuntu2204_aarch64:v2022-10-13T18_13_46',
+    }
+}
 
 
 class ClangBuilder:
@@ -272,8 +290,7 @@ class ClangBuilder:
             )
             return
 
-        if sys.platform != 'darwin':
-            activate_devtoolset()
+        activate_devtoolset()
 
         if (self.args.existing_build_dir is not None and
                 self.build_conf.get_llvm_build_parent_dir() != self.args.existing_build_dir):

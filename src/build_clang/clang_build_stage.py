@@ -207,11 +207,17 @@ class ClangBuildStage:
                     self.build_conf.llvm_major_version >= 15):
                 # Clang 15 build system does not set up rpath properly, and even the tblgen step
                 # fails to find libc++.
-                os_specific_subdir = f'{platform.machine()}-unknown-linux-gnu'
+                os_specific_lib_dir = f'lib/{platform.machine()}-unknown-linux-gnu'
                 # We need to escape the $ sign because otherwise $ORIGIN gets replaced by an
                 # empty string, probably deep in LLVM's CMake scripts.
-                extra_linker_flags.append(
-                        get_rpath_flag(rf'\$ORIGIN/../lib/{os_specific_subdir}'))
+                extra_linker_flags.append(get_rpath_flag(rf'\$ORIGIN/../{os_specific_lib_dir}'))
+                if self.build_conf.llvm_major_version >= 16:
+                    prev_stage_num = self.stage_number - 1
+                    # For Clang 16 on Linux, we also need to set rpath to allow finding libc++ from
+                    # the previous stage. llvm-tblgen might fail to find libc++ otherwise.
+                    extra_linker_flags.append(get_rpath_flag(
+                        rf'\$ORIGIN/../../../stage-{prev_stage_num}/installed/{os_specific_lib_dir}'
+                    ))
 
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
