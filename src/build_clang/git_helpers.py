@@ -2,6 +2,7 @@ import os
 import subprocess
 import pathlib
 import logging
+import sys
 
 from build_clang.helpers import run_cmd, ChangeDir
 from typing import Optional
@@ -16,8 +17,26 @@ def git_clone_tag(
         dest_path: str,
         save_git_log_to: Optional[str] = None) -> None:
     dest_path = os.path.abspath(dest_path)
-    if not os.path.exists(dest_path):
-        run_cmd(['git', 'clone', repo_url, '--branch', tag, '--depth', CLONE_DEPTH, dest_path])
+    if os.path.exists(dest_path):
+        return
+    cmd_line = ['git', 'clone', repo_url, '--branch', tag, '--depth', str(CLONE_DEPTH), dest_path]
+    p = subprocess.Popen(
+        cmd_line,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    stdout, stderr = p.communicate()
+    sys.stdout.write(stdout.decode('utf-8') + '\n')
+    sys.stderr.write(stderr.decode('utf-8') + '\n')
+    if p.returncode == 0:
+        return
+    if (b'attempt to fetch/clone from a shallow repository' in stderr and
+            repo_url.startswith('/') and
+            os.path.isdir(repo_url)):
+        logging.info("git does not support cloning from a shallow repository, just copying")
+        subprocess.check_call(['cp', '-R', repo_url, dest_path])
+        return
+
+    raise IOError("git command %s exited with code %d" % (cmd_line, p.returncode))
 
 
 def get_current_git_sha1(repo_path: str) -> str:

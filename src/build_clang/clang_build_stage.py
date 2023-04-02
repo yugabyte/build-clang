@@ -233,7 +233,10 @@ class ClangBuildStage:
             if (self.stage_number >= 3 and
                     is_linux() and
                     self.build_conf.llvm_major_version >= 16):
-                vars.update(SANITIZER_COMMON_LINK_FLAGS='-lc++abi')
+                vars.update(SANITIZER_COMMON_LINK_FLAGS=' '.join([
+                    '-lc++abi',
+                    '-lunwind'
+                ])
 
             if self.is_last_non_lto_stage:
                 # We only need tests at the last stage because that's where we build clangd-indexer.
