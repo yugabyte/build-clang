@@ -225,6 +225,10 @@ class ClangBuildStage:
                 CMAKE_MODULE_LINKER_FLAGS_INIT=extra_linker_flags_str,
                 CMAKE_EXE_LINKER_FLAGS_INIT=extra_linker_flags_str,
             )
+            if (self.stage_number >= 3 and
+                    is_linux() and
+                    self.build_conf.llvm_major_version >= 16):
+                vars.update(SANITIZER_COMMON_LINK_FLAGS=extra_linker_flags_str)
 
             if self.is_last_non_lto_stage:
                 # We only need tests at the last stage because that's where we build clangd-indexer.
