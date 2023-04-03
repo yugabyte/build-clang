@@ -7,6 +7,7 @@ import git
 import atexit
 import sys
 import time
+import platform
 
 from typing import Any, List, Optional
 
@@ -289,6 +290,46 @@ class ClangBuilder:
             tag_we_want,
             llvm_project_src_path)
 
+    def create_clang_rt_builtins_symlink(self, final_install_dir: str) -> None:
+        """
+        Boost 1.81 and potentially newer versions of Boost look for the following file relative'
+        to the Clang installation directory (example given for x86_64 architecture):
+
+        lib/clang/16/lib/linux/libclang_rt.builtins-x86_64.a
+
+        However, this file is installed by default in the following location:
+
+        lib/clang/16/lib/x86_64-unknown-linux-gnu/libclang_rt.builtins.a
+
+        Here, we create a relative symlink to satisfy this requirement.
+        """
+
+        if not is_linux():
+            return
+
+        llvm_major_version = self.build_conf.llvm_major_version
+        arch = platform.machine()
+        os_name = platform.system().lower()
+        common_dir_prefix = os.path.join(
+            final_install_dir,
+            'lib', 'clang', str(llvm_major_version), 'lib')
+        actual_file_path = os.path.join(
+            common_dir_prefix,
+            f'{arch}-unknown-linux-gnu',
+            'libclang_rt.builtins.a')
+        link_path = os.path.join(
+            common_dir_prefix,
+            'linux',
+            f'libclang_rt.builtins-{arch}.a')
+        if not os.path.exists(actual_file_path):
+            raise IOError(
+                f'File does not exist: {actual_file_path}. '
+                f'Cannot create symlink to it at {link_path}.')
+        link_parent_dir = os.path.abspath(os.path.dirname(link_path))
+        os.symlink(os.path.relpath(os.path.abspath(actual_file_path), link_parent_dir),
+                   link_path)
+        logging.info(f"Created a symlink at {link_path} pointing to {actual_file_path}")
+
     def run(self) -> None:
         if os.getenv('BUILD_CLANG_REMOTELY') == '1' and not self.args.local_build:
             remote_build.build_remotely(
@@ -350,6 +391,8 @@ class ClangBuilder:
 
         final_install_dir = (
             self.args.upload_earlier_build or self.build_conf.get_final_install_dir())
+        self.create_clang_rt_builtins_symlink(final_install_dir)
+
         final_install_dir_basename = os.path.basename(final_install_dir)
         final_install_parent_dir = os.path.dirname(final_install_dir)
         archive_name = final_install_dir_basename + '.tar.gz'
