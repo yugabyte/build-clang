@@ -290,7 +290,7 @@ class ClangBuilder:
             tag_we_want,
             llvm_project_src_path)
 
-    def create_clang_rt_builtins_symlink(self, final_install_dir: str) -> None:
+    def create_clang_rt_builtins_symlinks(self, final_install_dir: str) -> None:
         """
         Boost 1.81 and potentially newer versions of Boost look for the following file relative'
         to the Clang installation directory (example given for x86_64 architecture):
@@ -313,22 +313,30 @@ class ClangBuilder:
         common_dir_prefix = os.path.join(
             final_install_dir,
             'lib', 'clang', str(llvm_major_version), 'lib')
-        actual_file_path = os.path.join(
+        existing_per_arch_dir = os.path.join(
             common_dir_prefix,
-            f'{arch}-unknown-linux-gnu',
-            'libclang_rt.builtins.a')
-        link_path = os.path.join(
-            common_dir_prefix,
-            'linux',
-            f'libclang_rt.builtins-{arch}.a')
-        if not os.path.exists(actual_file_path):
+            f'{arch}-unknown-linux-gnu')
+        if not os.path.isdir(existing_per_arch_dir):
             raise IOError(
-                f'File does not exist: {actual_file_path}. '
-                f'Cannot create symlink to it at {link_path}.')
-        link_parent_dir = os.path.abspath(os.path.dirname(link_path))
-        os.symlink(os.path.relpath(os.path.abspath(actual_file_path), link_parent_dir),
-                   link_path)
-        logging.info(f"Created a symlink at {link_path} pointing to {actual_file_path}")
+                f"Directory does not exist: {existing_per_arch_dir}, cannot create symlinks to "
+                f"files in this directory.")
+        link_parent_dir = os.path.join(common_dir_prefix, 'linux')
+        mkdir_p(link_parent_dir)
+        num_symlinks_created = 0
+        for file_name in os.listdir(existing_per_arch_dir):
+            if not file_name.endswith(('.so', '.a')):
+                continue
+            actual_file_path = os.path.join(existing_per_arch_dir, file_name)
+            name_without_ext, ext = os.path.splitext(file_name)
+            link_name = f"{name_without_ext}-{arch}{ext}"
+            link_path = os.path.join(link_parent_dir, link_name)
+            os.symlink(os.path.relpath(os.path.abspath(actual_file_path), link_parent_dir),
+                       link_path)
+            num_symlinks_created += 1
+
+        logging.info(
+            f"Created {num_symlinks_created} symlinks to files in {existing_per_arch_dir} in "
+            f"{link_parent_dir} to facilitate Boost 1.81+ build")
 
     def run(self) -> None:
         if os.getenv('BUILD_CLANG_REMOTELY') == '1' and not self.args.local_build:
@@ -391,7 +399,7 @@ class ClangBuilder:
 
         final_install_dir = (
             self.args.upload_earlier_build or self.build_conf.get_final_install_dir())
-        self.create_clang_rt_builtins_symlink(final_install_dir)
+        self.create_clang_rt_builtins_symlinks(final_install_dir)
 
         final_install_dir_basename = os.path.basename(final_install_dir)
         final_install_parent_dir = os.path.dirname(final_install_dir)
