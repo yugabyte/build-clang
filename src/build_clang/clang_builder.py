@@ -292,8 +292,8 @@ class ClangBuilder:
 
     def create_clang_rt_builtins_symlinks(self, final_install_dir: str) -> None:
         """
-        Boost 1.81 and potentially newer versions of Boost look for the following file relative'
-        to the Clang installation directory (example given for x86_64 architecture):
+        Boost 1.81 and potentially newer versions of Boost look for the following kinds of file
+        names relative to the Clang installation directory (example given for x86_64 architecture):
 
         lib/clang/16/lib/linux/libclang_rt.builtins-x86_64.a
 
@@ -301,7 +301,8 @@ class ClangBuilder:
 
         lib/clang/16/lib/x86_64-unknown-linux-gnu/libclang_rt.builtins.a
 
-        Here, we create a relative symlink to satisfy this requirement.
+        This pattern repeats for many different runtime libraries, e.g. UBSAN. Here, we create
+        the corresponding symlinks to satisfy this requirement.
         """
 
         if not is_linux():
