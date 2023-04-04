@@ -27,6 +27,7 @@ from build_clang.helpers import (
     mkdir_p,
     run_cmd,
     get_major_version,
+    remove_version_suffix,
 )
 from build_clang.clang_build_stage import ClangBuildStage
 from build_clang.clang_build_conf import ClangBuildConf
@@ -310,10 +311,27 @@ class ClangBuilder:
 
         llvm_major_version = self.build_conf.llvm_major_version
         arch = platform.machine()
-        os_name = platform.system().lower()
-        common_dir_prefix = os.path.join(
-            final_install_dir,
-            'lib', 'clang', str(llvm_major_version), 'lib')
+
+        llvm_version_variants = sorted(set([
+            str(llvm_major_version),
+            remove_version_suffix(self.build_conf.version)
+        ]))
+
+        existing_prefix_dirs = []
+        prefix_dir_candidates = []
+        for version_str in llvm_version_variants:
+            common_dir_prefix_candidate = os.path.join(
+                final_install_dir,
+                'lib', 'clang', version_str, 'lib')
+            if os.path.isdir(common_dir_prefix_candidate):
+                existing_prefix_dirs.append(common_dir_prefix_candidate)
+            prefix_dir_candidates.append(common_dir_prefix_candidate)
+        if len(existing_prefix_dirs) == 0:
+            raise ValueError("None of these directories exist: %s" % prefix_dir_candidates)
+        if len(existing_prefix_dirs) > 1:
+            raise ValueError("Multiple directories exist: %s" % existing_prefix_dirs)
+        common_dir_prefix = existing_prefix_dirs[0]
+
         existing_per_arch_dir = os.path.join(
             common_dir_prefix,
             f'{arch}-unknown-linux-gnu')

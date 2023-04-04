@@ -216,3 +216,13 @@ def get_major_version(version: str) -> int:
     15
     """
     return int(version.split('.')[0])
+
+
+def remove_version_suffix(version: str) -> str:
+    """
+    >>> remove_version_suffix('16.0.0-yb-1')
+    '16.0.0'
+    >>> remove_version_suffix('15.0.7-yb-1')
+    '15.0.7'
+    """
+    return version.split('-')[0]
