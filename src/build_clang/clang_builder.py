@@ -158,9 +158,6 @@ class ClangBuilder:
             '--skip_upload',
             help='Skip package upload',
             action='store_true')
-        parser.add_argument(
-            '--check_github_token',
-            help='Check that we have a GitHub token before doing any builds')
         self.args = parser.parse_args()
 
         max_allowed_stage = self.get_max_allowed_stage()
