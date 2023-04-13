@@ -1,11 +1,9 @@
-import argparse
 import os
 import logging
 import shlex
 import subprocess
 import git
 import atexit
-import sys
 import time
 import platform
 
@@ -15,9 +13,6 @@ from sys_detection import is_linux, is_macos
 
 from build_clang.constants import (
     NUM_NON_LTO_STAGES,
-    DEFAULT_INSTALL_PARENT_DIR,
-    DEFAULT_GITHUB_ORG,
-    LLVM_VERSION_MAP,
     LLVM_PROJECT_CLONE_REL_PATH,
     GIT_SHA1_PLACEHOLDER_STR_WITH_SEPARATORS,
     YB_LLVM_ARCHIVE_NAME_PREFIX,
@@ -26,7 +21,6 @@ from build_clang.constants import (
 from build_clang.helpers import (
     mkdir_p,
     run_cmd,
-    get_major_version,
     remove_version_suffix,
 )
 from build_clang.clang_build_stage import ClangBuildStage
@@ -34,23 +28,7 @@ from build_clang.clang_build_conf import ClangBuildConf
 from build_clang.git_helpers import git_clone_tag, get_current_git_sha1, save_git_log_to_file
 from build_clang import remote_build
 from build_clang.devtoolset import activate_devtoolset
-
-# TODO: automatically pull latest images from https://github.com/yugabyte/build-infra
-DOCKER_IMAGES = {
-    'x86_64': {
-        'almalinux8': 'yb_build_infra_almalinux8_x86_64:v2022-10-13T18_10_49',
-        'centos7': 'yb_build_infra_centos7_x86_64:v2022-10-13T18_10_48',
-        'ubuntu1804': 'yb_build_infra_ubuntu1804_x86_64:v2022-10-13T18_10_49',
-        'ubuntu2004': 'yb_build_infra_ubuntu2004_x86_64:v2022-10-13T18_10_48',
-        'ubuntu2204': 'yb_build_infra_ubuntu2204_x86_64:v2022-10-13T18_10_50',
-    },
-    'aarch64': {
-        'centos7': 'yb_build_infra_centos7_aarch64:v2022-10-13T18_12_26',
-        'almalinux8': 'yb_build_infra_almalinux8_aarch64:v2022-10-13T18_13_02',
-        'ubuntu2004': 'yb_build_infra_ubuntu2004_aarch64:v2022-10-13T18_13_18',
-        'ubuntu2204': 'yb_build_infra_ubuntu2204_aarch64:v2022-10-13T18_13_46',
-    }
-}
+from build_clang.cmd_line_args import parse_args
 
 
 class ClangBuilder:
@@ -62,155 +40,8 @@ class ClangBuilder:
     def __init__(self) -> None:
         self.stages = []
 
-    def get_max_allowed_stage(self) -> int:
-        if self.args.lto:
-            return NUM_NON_LTO_STAGES + 1
-        return NUM_NON_LTO_STAGES
-
     def parse_args(self) -> None:
-        parser = argparse.ArgumentParser(description='Build Clang')
-        parser.add_argument(
-            '--install_parent_dir',
-            help='Parent directory of the final installation directory. Default: ' +
-                 DEFAULT_INSTALL_PARENT_DIR,
-            default=DEFAULT_INSTALL_PARENT_DIR)
-        parser.add_argument(
-            '--local_build',
-            help='Run the build locally, even if BUILD_CLANG_REMOTE_... variables are set.',
-            action='store_true')
-        parser.add_argument(
-            '--remote_server', help='Server to build on',
-            default=os.getenv('BUILD_CLANG_REMOTE_SERVER'))
-        parser.add_argument(
-            '--remote_build_scripts_path',
-            help='Remote directory for the build-clang project repo',
-            default=os.getenv('BUILD_CLANG_REMOTE_BUILD_SCRIPTS_PATH'))
-        parser.add_argument(
-            '--clean',
-            action='store_true',
-            help='Clean the build directory before the build')
-        parser.add_argument(
-            '--min_stage',
-            type=int,
-            default=1,
-            help='First stage to build')
-        parser.add_argument(
-            '--max_stage',
-            type=int,
-            default=None,
-            help='Last stage to build')
-        parser.add_argument(
-            '--top_dir_suffix',
-            help='Suffix to append to the top-level directory that we will use for the build. ')
-        parser.add_argument(
-            '--llvm_version',
-            help='LLVM version to build, e.g. 12.0.1, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0, or '
-                 'Yugabyte-specific tags with extra patches, such as 12.0.1-yb-1 or 11.1.0-yb-1.',
-            default='16')
-        parser.add_argument(
-            '--skip_auto_suffix',
-            help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
-                 'build directory and the archive name. This is useful for incremental builds when '
-                 'debugging build-clang scripts.',
-            action='store_true')
-        parser.add_argument(
-            '--use_compiler_wrapper',
-            action='store_true',
-            help='Use a compiler wrapper script. May slow down compilation.')
-        parser.add_argument(
-            '--lto',
-            action='store_true',
-            default=None,
-            help='Use link-time optimization for the final stage of the build (default on Linux)')
-        parser.add_argument(
-            '--no-lto',
-            dest='lto',
-            action='store_false',
-            help='The opposite of --lto (LTO is disabled by default on macOS)')
-        parser.add_argument(
-            '--upload_earlier_build',
-            help='Upload earlier build specified by this path. This is useful for debugging '
-                 'release upload to GitHub.')
-        parser.add_argument(
-            '--reuse_tarball',
-            help='Reuse existing tarball (for use with --upload_earlier_build).',
-            action='store_true')
-        parser.add_argument(
-            '--no_compiler_rt',
-            help='Do not use compiler-rt runtime',
-            action='store_true')
-        parser.add_argument(
-            '--existing_build_dir',
-            help='Continue build in an existing directory, e.g. '
-                 '/opt/yb-build/llvm/yb-llvm-v12.0.0-1618898532-d28af7c6-build. '
-                 'This helps when developing these scripts to avoid rebuilding from scratch.')
-        parser.add_argument(
-            '--parallelism', '-j',
-            type=int,
-            help='Set the parallelism level for Ninja builds'
-        )
-        parser.add_argument(
-            '--github_org',
-            help='GitHub organization to use in the clone URL. Default: ' + DEFAULT_GITHUB_ORG,
-            default=DEFAULT_GITHUB_ORG
-        )
-        parser.add_argument(
-            '--skip_upload',
-            help='Skip package upload',
-            action='store_true')
-        self.args = parser.parse_args()
-
-        max_allowed_stage = self.get_max_allowed_stage()
-        if self.args.max_stage is None:
-            self.args.max_stage = max_allowed_stage
-        if self.args.min_stage < 1:
-            raise ValueError("--min-stage value too low: %d" % self.args.min_stage)
-        if self.args.max_stage > max_allowed_stage:
-            raise ValueError("--max-stage value too high: %d" % self.args.max_stage)
-        if self.args.min_stage > self.args.max_stage:
-            raise ValueError(
-                "--min-stage value (%d) is greater than --max-stage value (%d)" % (
-                    self.args.min_stage, self.args.max_stage))
-
-        if self.args.existing_build_dir:
-            logging.info("Assuming --skip_auto_suffix because --existing_build_dir is set")
-            self.args.skip_auto_suffix = True
-
-        adjusted_llvm_version = LLVM_VERSION_MAP.get(
-            self.args.llvm_version, self.args.llvm_version)
-        if self.args.llvm_version != adjusted_llvm_version:
-            logging.info("Automatically substituting LLVM version %s for %s",
-                         adjusted_llvm_version, self.args.llvm_version)
-        self.args.llvm_version = adjusted_llvm_version
-
-        llvm_major_version = get_major_version(self.args.llvm_version)
-
-        if self.args.lto is None:
-            if is_linux():
-                if llvm_major_version >= 16:
-                    logging.info("Disabling LTO by default on Linux for LLVM major version %d",
-                                 llvm_major_version)
-                    self.args.lto = False
-                else:
-                    logging.info("Enabling LTO by default on Linux for LLVM major version %d",
-                                 llvm_major_version)
-                    self.args.lto = True
-            else:
-                logging.info("Disabling LTO by default on a non-Linux system")
-                self.args.lto = False
-        logging.info("LTO enabled: %s" % self.args.lto)
-
-        self.build_conf = ClangBuildConf(
-            install_parent_dir=self.args.install_parent_dir,
-            version=self.args.llvm_version,
-            user_specified_suffix=self.args.top_dir_suffix,
-            skip_auto_suffix=self.args.skip_auto_suffix,
-            clean_build=self.args.clean,
-            use_compiler_wrapper=self.args.use_compiler_wrapper,
-            use_compiler_rt=not self.args.no_compiler_rt,
-            existing_build_dir=self.args.existing_build_dir,
-            parallelism=self.args.parallelism
-        )
+        self.args, self.build_conf = parse_args()
 
     def init_stages(self) -> None:
         effective_stage_number = 1
@@ -332,20 +163,28 @@ class ClangBuilder:
             raise ValueError("Multiple directories exist: %s" % existing_prefix_dirs)
         common_dir_prefix = existing_prefix_dirs[0]
 
-        existing_per_arch_dir = os.path.join(
-            common_dir_prefix,
-            f'{arch}-unknown-linux-gnu')
-        if not os.path.isdir(existing_per_arch_dir):
+        candidate_rt_lib_dirs = []
+        for subdir_name in [f'{arch}-unknown-linux-gnu', 'linux']:
+            existing_rt_lib_dir = os.path.join(common_dir_prefix, subdir_name)
+            if os.path.isdir(existing_rt_lib_dir):
+                break
+            candidate_rt_lib_dirs.append(existing_rt_lib_dir)
+        if not os.path.isdir(existing_rt_lib_dir):
             raise IOError(
-                f"Directory does not exist: {existing_per_arch_dir}, cannot create symlinks to "
-                f"files in this directory.")
+                f"None of the directories {candidate_rt_lib_dirs} exist, cannot "
+                f"create symlinks pointing to the runtime library files.")
         link_parent_dir = os.path.join(common_dir_prefix, 'linux')
+        if link_parent_dir == existing_rt_lib_dir:
+            # This is the case for LLVM 14, but not for 15 and 16.
+            logging.info(f"Skipping symlink creation in {link_parent_dir}. "
+                         "This is already the expected directory.")
+            return
         mkdir_p(link_parent_dir)
         num_symlinks_created = 0
-        for file_name in os.listdir(existing_per_arch_dir):
+        for file_name in os.listdir(existing_rt_lib_dir):
             if not file_name.endswith(('.so', '.a')):
                 continue
-            actual_file_path = os.path.join(existing_per_arch_dir, file_name)
+            actual_file_path = os.path.join(existing_rt_lib_dir, file_name)
             name_without_ext, ext = os.path.splitext(file_name)
             link_name = f"{name_without_ext}-{arch}{ext}"
             link_path = os.path.join(link_parent_dir, link_name)
@@ -354,8 +193,8 @@ class ClangBuilder:
             num_symlinks_created += 1
 
         logging.info(
-            f"Created {num_symlinks_created} symlinks to files in {existing_per_arch_dir} in "
-            f"{link_parent_dir} to facilitate Boost 1.81+ build")
+            f"Created {num_symlinks_created} symlinks to files in {existing_rt_lib_dir} in "
+            f"{link_parent_dir} to allow Boost 1.81+ build to succeed")
 
     def run(self) -> None:
         if os.getenv('BUILD_CLANG_REMOTELY') == '1' and not self.args.local_build:
@@ -405,16 +244,20 @@ class ClangBuilder:
             effective_max_stage = self.args.max_stage
             if self.args.lto:
                 effective_max_stage = NUM_NON_LTO_STAGES + 1
-            for stage in self.stages:
-                if self.args.min_stage <= stage.stage_number <= effective_max_stage:
-                    stage_start_time_sec = time.time()
-                    logging.info("Building stage %d", stage.stage_number)
-                    stage.build()
-                    stage_elapsed_time_sec = time.time() - stage_start_time_sec
-                    logging.info("Built stage %d in %.1f seconds",
-                                 stage.stage_number, stage_elapsed_time_sec)
-                else:
-                    logging.info("Skipping stage %d", stage.stage_number)
+
+            if self.args.skip_build:
+                logging.info("Skipping building any stages, --skip_build specified")
+            else:
+                for stage in self.stages:
+                    if self.args.min_stage <= stage.stage_number <= effective_max_stage:
+                        stage_start_time_sec = time.time()
+                        logging.info("Building stage %d", stage.stage_number)
+                        stage.build()
+                        stage_elapsed_time_sec = time.time() - stage_start_time_sec
+                        logging.info("Built stage %d in %.1f seconds",
+                                     stage.stage_number, stage_elapsed_time_sec)
+                    else:
+                        logging.info("Skipping stage %d", stage.stage_number)
 
         final_install_dir = (
             self.args.upload_earlier_build or self.build_conf.get_final_install_dir())
