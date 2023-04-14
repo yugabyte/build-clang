@@ -47,6 +47,8 @@ class ClangBuildConf:
 
     parallelism: Optional[int]
 
+    target_arch: str
+
     def __init__(
             self,
             install_parent_dir: str,
@@ -57,7 +59,8 @@ class ClangBuildConf:
             use_compiler_wrapper: bool,
             use_compiler_rt: bool,
             existing_build_dir: Optional[str],
-            parallelism: Optional[int]) -> None:
+            parallelism: Optional[int],
+            target_arch: str) -> None:
         self.install_parent_dir = install_parent_dir
         self.version = version
         self.llvm_major_version = get_major_version(version)
@@ -95,6 +98,7 @@ class ClangBuildConf:
             self.unix_timestamp_for_suffix = str(int(time.time()))
 
         self.parallelism = parallelism
+        self.target_arch = target_arch
 
     def get_llvm_build_parent_dir(self) -> str:
         return os.path.join(

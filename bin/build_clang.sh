@@ -28,6 +28,24 @@ do_build() {
   set -u
 }
 
+if [[ -z ${YB_TARGET_ARCH:-} ]]; then
+  if is_apple_silicon; then
+    YB_TARGET_ARCH=arm64
+  else
+    YB_TARGET_ARCH=$( uname -m )
+  fi
+fi
+export YB_TARGET_ARCH
+
+if [[ $OSTYPE == darwin* ]]; then
+  # On macOS, add the Homebrew bin directory corresponding to the target architecture to the PATH.
+  if [[ $YB_TARGET_ARCH == "x86_64" ]]; then
+    export PATH=/usr/local/bin:$PATH
+  elif [[ $YB_TARGET_ARCH == "arm64" ]]; then
+    export PATH=/usr/homebrew/bin:$PATH
+  fi
+fi
+
 args=()
 is_help=false
 while [[ $# -gt 0 ]]; do

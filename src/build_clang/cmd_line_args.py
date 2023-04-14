@@ -1,6 +1,7 @@
 import argparse
 import os
 import logging
+import platform
 
 from typing import Tuple
 
@@ -20,8 +21,8 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Build Clang/LLVM')
     parser.add_argument(
         '--install_parent_dir',
-        help='Parent directory of the final installation directory. Default: ' +
-                DEFAULT_INSTALL_PARENT_DIR,
+        help='Parent directory of the final installation directory. Default: %s' %
+             DEFAULT_INSTALL_PARENT_DIR,
         default=DEFAULT_INSTALL_PARENT_DIR)
     parser.add_argument(
         '--local_build',
@@ -54,13 +55,13 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--llvm_version',
         help='LLVM version to build, e.g. 12.0.1, 11.1.0, 10.0.1, 9.0.1, 8.0.1, or 7.1.0, or '
-                'Yugabyte-specific tags with extra patches, such as 12.0.1-yb-1 or 11.1.0-yb-1.',
+             'Yugabyte-specific tags with extra patches, such as 12.0.1-yb-1 or 11.1.0-yb-1.',
         default='16')
     parser.add_argument(
         '--skip_auto_suffix',
         help='Do not add automatic suffixes based on Git commit SHA1 and current time to the '
-                'build directory and the archive name. This is useful for incremental builds when '
-                'debugging build-clang scripts.',
+             'build directory and the archive name. This is useful for incremental builds when '
+             'debugging build-clang scripts.',
         action='store_true')
     parser.add_argument(
         '--use_compiler_wrapper',
@@ -79,7 +80,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--upload_earlier_build',
         help='Upload earlier build specified by this path. This is useful for debugging '
-                'release upload to GitHub.')
+             'release upload to GitHub.')
     parser.add_argument(
         '--reuse_tarball',
         help='Reuse existing tarball (for use with --upload_earlier_build).',
@@ -91,8 +92,8 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--existing_build_dir',
         help='Continue build in an existing directory, e.g. '
-                '/opt/yb-build/llvm/yb-llvm-v12.0.0-1618898532-d28af7c6-build. '
-                'This helps when developing these scripts to avoid rebuilding from scratch.')
+             '/opt/yb-build/llvm/yb-llvm-v12.0.0-1618898532-d28af7c6-build. '
+             'This helps when developing these scripts to avoid rebuilding from scratch.')
     parser.add_argument(
         '--parallelism', '-j',
         type=int,
@@ -112,6 +113,11 @@ def create_arg_parser() -> argparse.ArgumentParser:
         '--skip_upload',
         help='Skip package upload',
         action='store_true')
+
+    parser.add_argument(
+        '--target_arch',
+        help='Target architecture to build for.',
+        choices=['x86_64', 'aarch64', 'arm64'])
 
     return parser
 
@@ -142,7 +148,7 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
         args.llvm_version, args.llvm_version)
     if args.llvm_version != adjusted_llvm_version:
         logging.info("Automatically substituting LLVM version %s for %s",
-                        adjusted_llvm_version, args.llvm_version)
+                     adjusted_llvm_version, args.llvm_version)
     args.llvm_version = adjusted_llvm_version
 
     llvm_major_version = get_major_version(args.llvm_version)
@@ -151,17 +157,35 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
         if is_linux():
             if llvm_major_version >= 16:
                 logging.info("Disabling LTO by default on Linux for LLVM major version %d",
-                                llvm_major_version)
+                             llvm_major_version)
                 args.lto = False
             else:
                 logging.info("Enabling LTO by default on Linux for LLVM major version %d",
-                                llvm_major_version)
+                             llvm_major_version)
                 args.lto = True
         else:
             logging.info("Disabling LTO by default on a non-Linux system")
             args.lto = False
 
     logging.info("LTO enabled: %s" % args.lto)
+
+    target_arch_arg = args.target_arch
+    target_arch_from_env = os.environ.get('YB_TARGET_ARCH')
+    current_arch = platform.machine()
+
+    arch_agreement = [
+        arch for arch in [target_arch_arg, target_arch_from_env, current_arch]
+        if arch is not None
+    ]
+    if len(set(arch_agreement)) != 1:
+        raise ValueError(
+            "Target architecture is ambiguous: %s. "
+            "--target_arch arg is %s, YB_TARGET_ARCH env var is %s, "
+            "platform.machine() is %s" % (
+                arch_agreement,
+                target_arch_arg,
+                target_arch_from_env,
+                current_arch))
 
     build_conf = ClangBuildConf(
         install_parent_dir=args.install_parent_dir,
@@ -172,7 +196,8 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
         use_compiler_wrapper=args.use_compiler_wrapper,
         use_compiler_rt=not args.no_compiler_rt,
         existing_build_dir=args.existing_build_dir,
-        parallelism=args.parallelism
+        parallelism=args.parallelism,
+        target_arch=current_arch
     )
 
     return args, build_conf
