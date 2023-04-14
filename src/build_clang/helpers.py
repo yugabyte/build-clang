@@ -6,7 +6,9 @@ import hashlib
 import time
 import shlex
 import stat
+import platform
 
+from sys_detection import is_macos
 
 from typing import List, Any, Dict, Optional, Union
 from datetime import datetime

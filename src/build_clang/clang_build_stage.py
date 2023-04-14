@@ -25,6 +25,7 @@ from build_clang.helpers import (
     cmake_vars_to_args,
 )
 from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
+from build_clang.architecture import validate_build_output_arch, get_arch_switch_cmd_prefix
 
 
 class ClangBuildStage:
@@ -145,10 +146,10 @@ class ClangBuildStage:
             LLVM_TARGETS_TO_BUILD='X86;AArch64',
 
             BUILD_SHARED_LIBS=True,
-
             CMAKE_EXPORT_COMPILE_COMMANDS=True,
 
             LLVM_ENABLE_RTTI=True,
+            LLVM_ENABLE_ZSTD=False,
         )
 
         if self.build_conf.llvm_major_version >= 16:
@@ -291,7 +292,7 @@ class ClangBuildStage:
         return c_compiler, cxx_compiler
 
     def _run_ninja(self, args: List[str] = []) -> None:
-        ninja_args: List[str] = ['ninja']
+        ninja_args: List[str] = get_arch_switch_cmd_prefix(self.build_conf.target_arch) + ['ninja']
         if self.build_conf.parallelism:
             ninja_args.append('-j%d' % self.build_conf.parallelism)
         ninja_args.extend(args)
@@ -353,7 +354,7 @@ class ClangBuildStage:
             with EnvVarContext(**env_vars):
 
                 cmake_vars = self.get_llvm_cmake_variables()
-                run_cmd([
+                run_cmd(get_arch_switch_cmd_prefix(self.build_conf.target_arch) + [
                     self.build_conf.cmake_executable_path,
                     '-G', 'Ninja',
                     '-S', os.path.join(self.build_conf.get_llvm_project_clone_dir(), 'llvm')
@@ -398,6 +399,8 @@ class ClangBuildStage:
                                 self.build_conf.get_llvm_build_info_dir(), file_name)
                             self.log_info("Copying file %s to %s", src_path, dst_path)
                             shutil.copyfile(src_path, dst_path)
+
+                validate_build_output_arch(self.build_conf.target_arch, self.install_prefix)
 
     def check_dynamic_libraries(self) -> None:
         for root, dirs, files in os.walk(self.install_prefix):
