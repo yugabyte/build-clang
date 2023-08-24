@@ -142,3 +142,5 @@ cython_debug/
 .vscode
 
 venv-arm64
+
+yugabyte-bash-common/
