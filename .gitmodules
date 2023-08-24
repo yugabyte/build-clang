@@ -1,3 +1,0 @@
-[submodule "yugabyte-bash-common"]
-	path = yugabyte-bash-common
-	url = https://github.com/yugabyte/yugabyte-bash-common.git

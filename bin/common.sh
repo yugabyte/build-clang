@@ -22,10 +22,8 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
 fi
 
 build_clang_project_root=$( cd "${BASH_SOURCE[0]%/*}" && cd .. && pwd )
-if [[ ! -d $build_clang_project_root/yugabyte-bash-common ||
-      -z "$( ls -A "$build_clang_project_root/yugabyte-bash-common" )" ]]; then
-  ( cd "$build_clang_project_root"; git submodule update --init --recursive )
-fi
+
+"${build_clang_project_root}/bin/update-yugabyte-bash-common.sh"
 
 # shellcheck source=yugabyte-bash-common/src/yugabyte-bash-common.sh
 . "$build_clang_project_root/yugabyte-bash-common/src/yugabyte-bash-common.sh"
