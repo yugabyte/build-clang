@@ -83,9 +83,6 @@ class ClangBuildStage:
         self.stage_start_timestamp_str = None
         self.is_last_non_lto_stage = is_last_non_lto_stage
         self.lto = lto
-        # In LTO mode, we create two "last stages", with and without LTO.
-        if self.lto:
-            assert(not self.is_last_non_lto_stage)
 
     def is_first_stage(self) -> bool:
         return self.prev_stage is None
@@ -112,9 +109,7 @@ class ClangBuildStage:
             # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
             if (llvm_major_version >= 10 and
-                    not (llvm_major_version >= 13 and is_macos()) and
-                    # See http://bit.ly/3nsVnmr for the LLVM 16 issue with building lldb.
-                    llvm_major_version != 16):
+                    not (llvm_major_version >= 13 and is_macos())):
                 # There were some issues building lldb for LLVM 9 and older.
                 # Also, LLVM 14.0.3's LLDB does not build cleanly on macOS in my experience.
                 # https://gist.githubusercontent.com/mbautin/a17fa5087e651d4b7d16c27ea6fb80ed/raw
