@@ -132,9 +132,12 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
         if args.max_stage is None:
             args.max_stage = max_allowed_stage
         if args.min_stage < 1:
-            raise ValueError("--min-stage value too low: %d" % args.min_stage)
+            raise ValueError("--min_stage value too low: %d" % args.min_stage)
         if args.max_stage > max_allowed_stage:
-            raise ValueError("--max-stage value too high: %d" % args.max_stage)
+            raise ValueError(
+                f"--max_stage value too high: {args.max_stage}, must be {max_allowed_stage} or "
+                f"lower. LTO is " + ("enabled" if args.lto else "disabled") + ".")
+
         if args.min_stage > args.max_stage:
             raise ValueError(
                 "--min-stage value (%d) is greater than --max-stage value (%d)" % (
