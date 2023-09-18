@@ -158,14 +158,8 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
 
     if args.lto is None:
         if is_linux():
-            if llvm_major_version >= 16:
-                logging.info("Disabling LTO by default on Linux for LLVM major version %d",
-                             llvm_major_version)
-                args.lto = False
-            else:
-                logging.info("Enabling LTO by default on Linux for LLVM major version %d",
-                             llvm_major_version)
-                args.lto = True
+            logging.info("Enabling LTO by default on Linux")
+            args.lto = True
         else:
             logging.info("Disabling LTO by default on a non-Linux system")
             args.lto = False
