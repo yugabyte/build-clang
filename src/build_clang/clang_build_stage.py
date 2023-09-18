@@ -215,20 +215,9 @@ class ClangBuildStage:
                     prev_stage_num = self.stage_number - 1
                     # For Clang 16 on Linux, we also need to set rpath to allow finding libc++ from
                     # the previous stage. llvm-tblgen might fail to find libc++ otherwise.
-                    if self.lto:
-                        # https://github.com/yugabyte/build-clang/issues/9
-                        # For LTO builds, we need the rpath to reference the install directory of
-                        # the previous stage, which is the final installation directory, not the
-                        # a ...-build/stage-N kind of directory.
-                        assert self.prev_stage   # must be set because we know stage_number >= 3
-                        prev_stage_install_prefix = self.prev_stage.install_prefix
-                    else:
-                        # Note that the number of ".." components was picked so that it would fix
-                        # a specific linking error, and might not work well for all LLVM executables
-                        # that might get added at different nesting levels in the future.
-                        prev_stage_install_prefix = rf'\$ORIGIN/../../../stage-{prev_stage_num}'
+                    assert self.prev_stage   # must be set because we know stage_number >= 3
                     extra_rpath_flags.append(get_rpath_flag(
-                        os.path.join(prev_stage_install_prefix, os_specific_lib_dir)
+                        os.path.join(self.prev_stage.install_prefix, os_specific_lib_dir)
                     ))
 
             extra_linker_flags.extend(extra_rpath_flags)
