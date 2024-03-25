@@ -93,7 +93,7 @@ class ClangBuildStage:
             # For first stage, we don't build these runtimes because the bootstrap compiler
             # might not be able to compile them (e.g. GCC 8 is having trouble building libc++
             # from the LLVM 13 codebase).
-            runtimes.extend(['libcxx', 'libcxxabi', 'compiler-rt'])
+            runtimes.extend(['libcxx', 'libcxxabi', 'compiler-rt', 'openmp'])
         return runtimes
 
     def get_enabled_projects(self) -> List[str]:
