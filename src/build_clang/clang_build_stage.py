@@ -94,7 +94,7 @@ class ClangBuildStage:
             # might not be able to compile them (e.g. GCC 8 is having trouble building libc++
             # from the LLVM 13 codebase).
             runtimes.extend(['libcxx', 'libcxxabi', 'compiler-rt'])
-        if self.is_last_non_lto_stage() and self.build_conf.openmp_enabled:
+        if self.is_last_non_lto_stage and self.build_conf.openmp_enabled:
             runtimes.append('openmp')
         return runtimes
 
