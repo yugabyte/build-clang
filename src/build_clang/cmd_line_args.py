@@ -119,6 +119,10 @@ def create_arg_parser() -> argparse.ArgumentParser:
         help='Target architecture to build for.',
         choices=['x86_64', 'aarch64', 'arm64'])
 
+    parser.add_argument(
+        '--with_openmp',
+        action='store_true',
+        help='Enable OpenMP runtime support')
     return parser
 
 
@@ -164,6 +168,7 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
             logging.info("Disabling LTO by default on a non-Linux system")
             args.lto = False
 
+    logging.info("LLVM major version: %d", llvm_major_version)
     logging.info("LTO enabled: %s" % args.lto)
 
     target_arch_arg = args.target_arch
@@ -194,7 +199,8 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
         use_compiler_rt=not args.no_compiler_rt,
         existing_build_dir=args.existing_build_dir,
         parallelism=args.parallelism,
-        target_arch=current_arch
+        target_arch=current_arch,
+        openmp_enabled=args.with_openmp
     )
 
     return args, build_conf

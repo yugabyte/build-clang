@@ -49,6 +49,8 @@ class ClangBuildConf:
 
     target_arch: str
 
+    openmp_enabled: bool
+
     def __init__(
             self,
             install_parent_dir: str,
@@ -60,7 +62,8 @@ class ClangBuildConf:
             use_compiler_rt: bool,
             existing_build_dir: Optional[str],
             parallelism: Optional[int],
-            target_arch: str) -> None:
+            target_arch: str,
+            openmp_enabled: bool) -> None:
         self.install_parent_dir = install_parent_dir
         self.version = version
         self.llvm_major_version = get_major_version(version)
@@ -99,6 +102,7 @@ class ClangBuildConf:
 
         self.parallelism = parallelism
         self.target_arch = target_arch
+        self.openmp_enabled = openmp_enabled
 
     def get_llvm_build_parent_dir(self) -> str:
         return os.path.join(
