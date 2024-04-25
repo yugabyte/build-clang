@@ -26,6 +26,7 @@ from build_clang.helpers import (
 )
 from build_clang.compiler_wrapper import get_cmake_args_for_compiler_wrapper
 from build_clang.architecture import validate_build_output_arch, get_arch_switch_cmd_prefix
+from build_clang.devtoolset import find_latest_gcc
 
 
 class ClangBuildStage:
@@ -278,8 +279,7 @@ class ClangBuildStage:
 
     def get_compilers(self) -> Tuple[str, str]:
         if self.stage_number == 1:
-            c_compiler = which('gcc')
-            cxx_compiler = which('g++')
+            c_compiler, cxx_compiler = find_latest_gcc()
         else:
             assert self.prev_stage is not None
             prev_stage_install_prefix = self.prev_stage.install_prefix
