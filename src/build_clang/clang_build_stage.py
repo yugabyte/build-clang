@@ -121,9 +121,6 @@ class ClangBuildStage:
                 # https://gist.githubusercontent.com/mbautin/a17fa5087e651d4b7d16c27ea6fb80ed/raw
                 enabled_projects.append('lldb')
 
-            if self.should_build_openmp():
-                enabled_projects.append('openmp')
-
         return sorted(enabled_projects)
 
     def get_llvm_cmake_variables(self) -> Dict[str, str]:
