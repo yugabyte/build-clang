@@ -88,6 +88,9 @@ class ClangBuildStage:
     def is_first_stage(self) -> bool:
         return self.prev_stage is None
 
+    def should_build_openmp(self) -> bool:
+        return self.build_conf.openmp_enabled
+
     def get_enabled_runtimes(self) -> List[str]:
         runtimes = ['libunwind']
         if not self.is_first_stage():
@@ -95,7 +98,7 @@ class ClangBuildStage:
             # might not be able to compile them (e.g. GCC 8 is having trouble building libc++
             # from the LLVM 13 codebase).
             runtimes.extend(['libcxx', 'libcxxabi', 'compiler-rt'])
-        if self.is_last_non_lto_stage and self.build_conf.openmp_enabled:
+        if self.is_last_non_lto_stage and self.should_build_openmp():
             runtimes.append('openmp')
         return runtimes
 
@@ -117,6 +120,10 @@ class ClangBuildStage:
                 # Also, LLVM 14.0.3's LLDB does not build cleanly on macOS in my experience.
                 # https://gist.githubusercontent.com/mbautin/a17fa5087e651d4b7d16c27ea6fb80ed/raw
                 enabled_projects.append('lldb')
+
+            if self.should_build_openmp():
+                enabled_projects.append('openmp')
+
         return sorted(enabled_projects)
 
     def get_llvm_cmake_variables(self) -> Dict[str, str]:
