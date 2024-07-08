@@ -3,7 +3,7 @@ import os
 import logging
 import platform
 
-from typing import Tuple
+from typing import Tuple, Union
 
 from sys_detection import is_linux
 
@@ -15,6 +15,17 @@ from build_clang.constants import (
 )
 from build_clang.helpers import get_major_version
 from build_clang.clang_build_conf import ClangBuildConf
+
+
+def convert_bool_arg(value: Union[str, bool]) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized_value = value.lower()
+    if normalized_value in ('yes', 'true', 't', 'y', '1'):
+        return True
+    if normalized_value in ('no', 'false', 'f', 'n', '0'):
+        return False
+    raise argparse.ArgumentTypeError(f"Boolean value expected. Got {value}.")
 
 
 def create_arg_parser() -> argparse.ArgumentParser:
@@ -121,8 +132,12 @@ def create_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         '--with_openmp',
-        action='store_true',
-        help='Enable OpenMP runtime support')
+        type=convert_bool_arg,
+        nargs='?',
+        const=True,
+        default=True,
+        help="Build LLVM with OpenMP support (true by default, specify =no to disable).")
+
     return parser
 
 

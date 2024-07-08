@@ -89,7 +89,7 @@ class ClangBuildStage:
         return self.prev_stage is None
 
     def should_build_openmp(self) -> bool:
-        return self.build_conf.openmp_enabled
+        return self.is_last_non_lto_stage and self.build_conf.openmp_enabled
 
     def get_enabled_runtimes(self) -> List[str]:
         runtimes = ['libunwind']
@@ -98,7 +98,7 @@ class ClangBuildStage:
             # might not be able to compile them (e.g. GCC 8 is having trouble building libc++
             # from the LLVM 13 codebase).
             runtimes.extend(['libcxx', 'libcxxabi', 'compiler-rt'])
-        if self.is_last_non_lto_stage and self.should_build_openmp():
+        if self.should_build_openmp():
             runtimes.append('openmp')
         return runtimes
 
@@ -274,6 +274,15 @@ class ClangBuildStage:
             vars.update(
                 CMAKE_C_COMPILER=c_compiler,
                 CMAKE_CXX_COMPILER=cxx_compiler
+            )
+
+        if self.should_build_openmp():
+            # To avoid this error:
+            # https://gist.githubusercontent.com/mbautin/e8e4ba0596c8af16fd4ee02b7da2fab3/raw
+            vars.update(
+                OPENMP_ENABLE_LIBOMPTARGET=False,
+                LIBOMP_OMPD_SUPPORT=False,
+                LIBOMP_ARCHER_SUPPORT=False
             )
 
         final_vars: Dict[str, str] = {}

@@ -8,7 +8,7 @@ cryptography==41.0.3
 Deprecated==1.2.14
 downloadutil==1.0.4
 gitdb==4.0.10
-GitPython==3.1.32
+GitPython==3.1.36
 idna==3.4
 mypy==1.5.1
 mypy-extensions==1.0.0
