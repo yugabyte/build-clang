@@ -42,6 +42,7 @@ LLVM_VERSION_MAP = {
     '16': '16.0.6-yb-3',
     '17': '17.0.6-yb-1',
     '18': '18.1.8-yb-1',
+    '19': '19.1.0-yb-1',
 }
 
 DEFAULT_GITHUB_ORG = 'yugabyte'
