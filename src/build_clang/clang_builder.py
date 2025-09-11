@@ -56,9 +56,42 @@ class ClangBuilder:
                     stage_number=effective_stage_number,
                     prev_stage=self.stages[-1] if self.stages else None,
                     is_last_non_lto_stage=(stage_number == NUM_NON_LTO_STAGES) and not lto,
-                    lto=lto
+                    lto=lto,
                 ))
                 effective_stage_number += 1
+
+        if self.args.pgo:
+            final_non_pgo_stage = self.stages[len(self.stages) - 1]
+            # Instrumented stage.
+            self.stages.append(ClangBuildStage(
+                build_conf=self.build_conf,
+                stage_number=effective_stage_number,
+                prev_stage=final_non_pgo_stage,
+                is_last_non_lto_stage=False,
+                lto=True,
+                pgo_instrumentation=True,
+            ))
+            effective_stage_number += 1
+            # Profiled build of clang.
+            self.stages.append(ClangBuildStage(
+                build_conf=self.build_conf,
+                stage_number=effective_stage_number,
+                prev_stage=final_non_pgo_stage,
+                is_last_non_lto_stage=False,
+                lto=True,
+            ))
+            effective_stage_number += 1
+            # PGO stage.
+            self.stages.append(ClangBuildStage(
+                build_conf=self.build_conf,
+                stage_number=effective_stage_number,
+                prev_stage=final_non_pgo_stage,
+                is_last_non_lto_stage=False,
+                lto=True,
+                pgo_instrumented_stage = self.stages[len(self.stages) - 2],
+            ))
+            effective_stage_number += 1
+
 
     def clone_llvm_source_code(self) -> None:
         llvm_project_src_path = self.build_conf.get_llvm_project_clone_dir()
@@ -244,6 +277,8 @@ class ClangBuilder:
             effective_max_stage = self.args.max_stage
             if self.args.lto:
                 effective_max_stage = NUM_NON_LTO_STAGES + 1
+            if self.args.pgo:
+                effective_max_stage = NUM_NON_LTO_STAGES + 3
 
             if self.args.skip_build:
                 logging.info("Skipping building any stages, --skip_build specified")

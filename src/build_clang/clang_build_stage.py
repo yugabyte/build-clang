@@ -1,4 +1,5 @@
 import os
+import glob
 import platform
 import logging
 import shutil
@@ -51,7 +52,14 @@ class ClangBuildStage:
     stage_start_timestamp_str: Optional[str]
 
     is_last_non_lto_stage: bool
+
     lto: bool
+
+    # Whether to instrument this stage to generate PGO profile data.
+    pgo_instrumentation: bool
+
+    # Previous stage that was instrumented.
+    pgo_instrumented_stage: Optional['ClangBuildStage']
 
     def __init__(
             self,
@@ -59,7 +67,10 @@ class ClangBuildStage:
             stage_number: int,
             prev_stage: Optional['ClangBuildStage'],
             is_last_non_lto_stage: bool,
-            lto: bool) -> None:
+            lto: bool,
+            *,
+            pgo_instrumentation: bool = False,
+            pgo_instrumented_stage: Optional['ClangBuildStage'] = None) -> None:
         # Fields based directly on the parameters.
         self.build_conf = build_conf
         self.stage_number = stage_number
@@ -84,6 +95,25 @@ class ClangBuildStage:
         self.stage_start_timestamp_str = None
         self.is_last_non_lto_stage = is_last_non_lto_stage
         self.lto = lto
+        self.pgo_instrumentation = pgo_instrumentation
+        self.pgo_instrumented_stage = pgo_instrumented_stage
+
+    def merge_profiled_data(self) -> str:
+        if not self.pgo_instrumentation:
+            raise ValueError("Not a PGO instrumentation stage")
+        if self.prev_stage is None:
+            raise ValueError("PGO instrumentation stage must have previous stage")
+
+        llvm_profdata = os.path.join(self.prev_stage.install_prefix, 'bin', 'llvm-profdata')
+        profiles_path = os.path.join(self.install_prefix, 'bin', 'profiles')
+        out_file = os.path.join(self.install_prefix, 'profdata.prof')
+        merge_command = [
+            llvm_profdata,
+            'merge',
+            f'-output={out_file}'
+        ] + glob.glob(os.path.join(profiles_path, '*.profraw'))
+        run_cmd(merge_command)
+        return out_file
 
     def is_first_stage(self) -> bool:
         return self.prev_stage is None
@@ -283,6 +313,18 @@ class ClangBuildStage:
                 OPENMP_ENABLE_LIBOMPTARGET=False,
                 LIBOMP_OMPD_SUPPORT=False,
                 LIBOMP_ARCHER_SUPPORT=False
+            )
+
+        if self.pgo_instrumentation:
+            # Taken from https://llvm.org/docs/HowToBuildWithPGO.html
+            vars.update(
+                LLVM_BUILD_INSTRUMENTED='IR',
+                LLVM_BUILD_RUNTIME=False
+            )
+
+        if self.pgo_instrumented_stage is not None:
+            vars.update(
+                LLVM_PROFDATA_FILE=self.pgo_instrumented_stage.merge_profiled_data()
             )
 
         final_vars: Dict[str, str] = {}
