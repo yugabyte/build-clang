@@ -155,7 +155,7 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
     parser = create_arg_parser()
     args = parser.parse_args()
 
-    max_allowed_stage = NUM_NON_LTO_STAGES + (4 if args.pgo else 1 if args.lto else 0)
+    max_allowed_stage = NUM_NON_LTO_STAGES + (3 if args.pgo else 1 if args.lto else 0)
 
     if not args.skip_build:
         if args.max_stage is None:
