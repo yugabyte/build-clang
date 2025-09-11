@@ -44,12 +44,14 @@ class ClangBuilder:
         self.args, self.build_conf = parse_args()
 
     def init_stages(self) -> None:
-        for stage_number in range(1, NUM_NON_LTO_STAGES):
+        for stage_number in range(1, NUM_NON_LTO_STAGES + 1):
+            last_non_lto_stage = (stage_number == NUM_NON_LTO_STAGES)
             self.stages.append(ClangBuildStage(
                 build_conf=self.build_conf,
                 stage_number=stage_number,
                 prev_stage=self.stages[-1] if self.stages else None,
-                is_last_non_lto_stage=(stage_number == NUM_NON_LTO_STAGES),
+                is_last_stage=last_non_lto_stage and not self.args.lto,
+                is_last_non_lto_stage=last_non_lto_stage,
             ))
 
         if self.args.lto:
@@ -57,6 +59,7 @@ class ClangBuilder:
                 build_conf=self.build_conf,
                 stage_number=NUM_NON_LTO_STAGES + 1,
                 prev_stage=self.stages[-1],
+                is_last_stage=not self.args.pgo,
                 lto=True,
             ))
 
@@ -81,9 +84,11 @@ class ClangBuilder:
                     build_conf=self.build_conf,
                     stage_number=NUM_NON_LTO_STAGES + 4,
                     prev_stage=self.stages[-1],
+                    is_last_stage=True,
                     lto=True,
                     pgo_instrumented_stage=self.stages[-2],
                 ))
+
 
     def clone_llvm_source_code(self) -> None:
         llvm_project_src_path = self.build_conf.get_llvm_project_clone_dir()

@@ -51,6 +51,8 @@ class ClangBuildStage:
     # We set this when we start building the stage.
     stage_start_timestamp_str: Optional[str]
 
+    is_last_stage: bool
+
     is_last_non_lto_stage: bool
 
     lto: bool
@@ -67,6 +69,7 @@ class ClangBuildStage:
             stage_number: int,
             prev_stage: Optional['ClangBuildStage'],
             *,
+            is_last_stage: bool = False,
             is_last_non_lto_stage: bool = False,
             lto: bool = False,
             pgo_instrumentation: bool = False,
@@ -95,6 +98,7 @@ class ClangBuildStage:
         else:
             self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
         self.stage_start_timestamp_str = None
+        self.is_last_stage = is_last_stage
         self.is_last_non_lto_stage = is_last_non_lto_stage
         self.lto = lto
         self.pgo_instrumentation = pgo_instrumentation
@@ -339,10 +343,7 @@ class ClangBuildStage:
             c_compiler, cxx_compiler = find_latest_gcc()
         else:
             assert self.prev_stage is not None
-            if self.prev_stage.is_last_non_lto_stage or self.prev_stage.lto:
-                prev_stage_install_prefix = self.build_conf.get_final_install_dir()
-            else:
-                prev_stage_install_prefix = self.prev_stage.install_prefix
+            prev_stage_install_prefix = self.prev_stage.install_prefix
             c_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang')
             cxx_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang++')
         assert c_compiler is not None
@@ -435,9 +436,17 @@ class ClangBuildStage:
                     lto_binaries = ['clang', 'lld']
                     self.log_info("Building LTO binaries: %s", lto_binaries)
                     self._run_ninja(lto_binaries)
-                    self.log_info("Installing LTO binaries: %s", lto_binaries)
-                    for lto_binary_name in lto_binaries:
-                        self.install_binary_to_final_dir(lto_binary_name)
+                    if self.is_last_stage:
+                        self.log_info("Installing LTO binaries: %s", lto_binaries)
+                        for lto_binary_name in lto_binaries:
+                            self.install_binary_to_final_dir(lto_binary_name)
+                    else:
+                        shutil.copytree(
+                            self.build_conf.get_final_install_dir(),
+                            self.install_prefix,
+                            symlinks=True,
+                            dirs_exist_ok=True)
+                        self._run_ninja(['install'])
                 else:
                     self._run_ninja()
                     if self.is_last_non_lto_stage:
