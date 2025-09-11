@@ -66,9 +66,9 @@ class ClangBuildStage:
             build_conf: ClangBuildConf,
             stage_number: int,
             prev_stage: Optional['ClangBuildStage'],
-            is_last_non_lto_stage: bool,
-            lto: bool,
             *,
+            is_last_non_lto_stage: bool = False,
+            lto: bool = False,
             pgo_instrumentation: bool = False,
             pgo_instrumented_stage: Optional['ClangBuildStage'] = None) -> None:
         # Fields based directly on the parameters.
@@ -89,6 +89,8 @@ class ClangBuildStage:
         self.compiler_invocations_top_dir = os.path.join(
             self.stage_base_dir, 'compiler_invocations')
         if is_last_non_lto_stage:
+            # We treat this stage specially, since we do not do LTO/PGO for tools, only for
+            # clang/lld. For LTO clang/LLD, we install those two binaries manually.
             self.install_prefix = self.build_conf.get_final_install_dir()
         else:
             self.install_prefix = os.path.join(self.stage_base_dir, 'installed')
@@ -337,7 +339,7 @@ class ClangBuildStage:
             c_compiler, cxx_compiler = find_latest_gcc()
         else:
             assert self.prev_stage is not None
-            if self.prev_stage.lto:
+            if self.prev_stage.is_last_non_lto_stage or self.prev_stage.lto:
                 prev_stage_install_prefix = self.build_conf.get_final_install_dir()
             else:
                 prev_stage_install_prefix = self.prev_stage.install_prefix

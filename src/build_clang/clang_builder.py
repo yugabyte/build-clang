@@ -44,54 +44,46 @@ class ClangBuilder:
         self.args, self.build_conf = parse_args()
 
     def init_stages(self) -> None:
-        effective_stage_number = 1
-        for stage_number in range(1, NUM_NON_LTO_STAGES + 1):
-            lto_values = [False]
-            if stage_number == NUM_NON_LTO_STAGES and self.args.lto:
-                lto_values.append(True)
+        for stage_number in range(1, NUM_NON_LTO_STAGES):
+            self.stages.append(ClangBuildStage(
+                build_conf=self.build_conf,
+                stage_number=stage_number,
+                prev_stage=self.stages[-1] if self.stages else None,
+                is_last_non_lto_stage=(stage_number == NUM_NON_LTO_STAGES),
+            ))
 
-            for lto in lto_values:
+        if self.args.lto:
+            self.stages.append(ClangBuildStage(
+                build_conf=self.build_conf,
+                stage_number=NUM_NON_LTO_STAGES + 1,
+                prev_stage=self.stages[-1],
+                lto=True,
+            ))
+
+            if self.args.pgo:
+                # Instrumented stage.
                 self.stages.append(ClangBuildStage(
                     build_conf=self.build_conf,
-                    stage_number=effective_stage_number,
-                    prev_stage=self.stages[-1] if self.stages else None,
-                    is_last_non_lto_stage=(stage_number == NUM_NON_LTO_STAGES) and not lto,
-                    lto=lto,
+                    stage_number=NUM_NON_LTO_STAGES + 2,
+                    prev_stage=self.stages[-1],
+                    lto=True,
+                    pgo_instrumentation=True,
                 ))
-                effective_stage_number += 1
-
-        if self.args.pgo:
-            final_non_pgo_stage = self.stages[len(self.stages) - 1]
-            # Instrumented stage.
-            self.stages.append(ClangBuildStage(
-                build_conf=self.build_conf,
-                stage_number=effective_stage_number,
-                prev_stage=final_non_pgo_stage,
-                is_last_non_lto_stage=False,
-                lto=True,
-                pgo_instrumentation=True,
-            ))
-            effective_stage_number += 1
-            # Profiled build of clang.
-            self.stages.append(ClangBuildStage(
-                build_conf=self.build_conf,
-                stage_number=effective_stage_number,
-                prev_stage=final_non_pgo_stage,
-                is_last_non_lto_stage=False,
-                lto=True,
-            ))
-            effective_stage_number += 1
-            # PGO stage.
-            self.stages.append(ClangBuildStage(
-                build_conf=self.build_conf,
-                stage_number=effective_stage_number,
-                prev_stage=final_non_pgo_stage,
-                is_last_non_lto_stage=False,
-                lto=True,
-                pgo_instrumented_stage = self.stages[len(self.stages) - 2],
-            ))
-            effective_stage_number += 1
-
+                # Profiled build of clang.
+                self.stages.append(ClangBuildStage(
+                    build_conf=self.build_conf,
+                    stage_number=NUM_NON_LTO_STAGES + 3,
+                    prev_stage=self.stages[-1],
+                    lto=True,
+                ))
+                # PGO stage.
+                self.stages.append(ClangBuildStage(
+                    build_conf=self.build_conf,
+                    stage_number=NUM_NON_LTO_STAGES + 4,
+                    prev_stage=self.stages[-1],
+                    lto=True,
+                    pgo_instrumented_stage=self.stages[-2],
+                ))
 
     def clone_llvm_source_code(self) -> None:
         llvm_project_src_path = self.build_conf.get_llvm_project_clone_dir()
