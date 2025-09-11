@@ -337,7 +337,10 @@ class ClangBuildStage:
             c_compiler, cxx_compiler = find_latest_gcc()
         else:
             assert self.prev_stage is not None
-            prev_stage_install_prefix = self.prev_stage.install_prefix
+            if self.prev_stage.lto:
+                prev_stage_install_prefix = self.build_conf.get_final_install_dir()
+            else:
+                prev_stage_install_prefix = self.prev_stage.install_prefix
             c_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang')
             cxx_compiler = os.path.join(prev_stage_install_prefix, 'bin', 'clang++')
         assert c_compiler is not None
