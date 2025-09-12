@@ -157,6 +157,25 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
 
     max_allowed_stage = NUM_NON_LTO_STAGES + (3 if args.pgo else 1 if args.lto else 0)
 
+    if args.lto is None:
+        if is_linux():
+            logging.info("Enabling LTO by default on Linux")
+            args.lto = True
+        else:
+            logging.info("Disabling LTO by default on a non-Linux system")
+            args.lto = False
+
+    if args.pgo is None:
+        if args.lto:
+            logging.info("Enabling PGO by default on LTO-enabled builds")
+            args.pgo = True
+        else:
+            logging.info("Disabling PGO by default on LTO-disabled builds")
+            args.pgo = False
+
+    if args.pgo and not args.lto:
+        raise ValueError("PGO build requires LTO enabled")
+
     if not args.skip_build:
         if args.max_stage is None:
             args.max_stage = max_allowed_stage
@@ -186,19 +205,8 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
 
     llvm_major_version = get_major_version(args.llvm_version)
 
-    if args.lto is None:
-        if is_linux():
-            logging.info("Enabling LTO by default on Linux")
-            args.lto = True
-        else:
-            logging.info("Disabling LTO by default on a non-Linux system")
-            args.lto = False
-
     logging.info("LLVM major version: %d", llvm_major_version)
     logging.info("LTO enabled: %s" % args.lto)
-
-    if args.pgo and not args.lto:
-        raise ValueError("PGO build requires LTO enabled")
     logging.info("PGO enabled: %s" % args.pgo)
 
     target_arch_arg = args.target_arch
