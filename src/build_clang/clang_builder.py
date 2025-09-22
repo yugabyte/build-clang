@@ -336,11 +336,16 @@ class ClangBuilder:
             with open(github_token_path) as github_token_file:
                 os.environ['GITHUB_TOKEN'] = github_token_file.read().strip()
 
+        release_message = 'Release %s (LTO %s, PGO %s)' % (
+            tag,
+            'enabled' if self.args.lto else 'disabled',
+            'enabled' if self.args.pgo else 'disabled')
+
         run_cmd([
             'hub',
             'release',
             'create', tag,
-            '-m', 'Release %s (LTO %s)' % (tag, 'enabled' if self.args.lto else 'disabled'),
+            '-m', release_message,
             '-a', archive_path,
             '-a', sha256sum_file_path,
             # '-t', ...
