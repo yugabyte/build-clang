@@ -82,12 +82,22 @@ def create_arg_parser() -> argparse.ArgumentParser:
         '--lto',
         action='store_true',
         default=None,
-        help='Use link-time optimization for the final stage of the build (default on Linux)')
+        help='Use link-time optimization for the final stages of the build (default on Linux)')
     parser.add_argument(
         '--no_lto',
         dest='lto',
         action='store_false',
         help='The opposite of --lto (LTO is disabled by default on macOS)')
+    parser.add_argument(
+        '--pgo',
+        action='store_true',
+        default=None,
+        help='Use profile-guided optimization for the final stage of the build. Requires LTO')
+    parser.add_argument(
+        '--no_pgo',
+        dest='pgo',
+        action='store_false',
+        help='The opposite of --pgo')
     parser.add_argument(
         '--upload_earlier_build',
         help='Upload earlier build specified by this path. This is useful for debugging '
@@ -145,7 +155,26 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
     parser = create_arg_parser()
     args = parser.parse_args()
 
-    max_allowed_stage = NUM_NON_LTO_STAGES + (1 if args.lto else 0)
+    max_allowed_stage = NUM_NON_LTO_STAGES + (3 if args.pgo else 1 if args.lto else 0)
+
+    if args.lto is None:
+        if is_linux():
+            logging.info("Enabling LTO by default on Linux")
+            args.lto = True
+        else:
+            logging.info("Disabling LTO by default on a non-Linux system")
+            args.lto = False
+
+    if args.pgo is None:
+        if args.lto:
+            logging.info("Enabling PGO by default on LTO-enabled builds")
+            args.pgo = True
+        else:
+            logging.info("Disabling PGO by default on LTO-disabled builds")
+            args.pgo = False
+
+    if args.pgo and not args.lto:
+        raise ValueError("PGO build requires LTO enabled")
 
     if not args.skip_build:
         if args.max_stage is None:
@@ -155,7 +184,8 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
         if args.max_stage > max_allowed_stage:
             raise ValueError(
                 f"--max_stage value too high: {args.max_stage}, must be {max_allowed_stage} or "
-                f"lower. LTO is " + ("enabled" if args.lto else "disabled") + ".")
+                f"lower. LTO is " + ("enabled" if args.lto else "disabled") + ". "
+                f"PGO is " + ("enabled" if args.pgo else "disabled"))
 
         if args.min_stage > args.max_stage:
             raise ValueError(
@@ -175,16 +205,9 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
 
     llvm_major_version = get_major_version(args.llvm_version)
 
-    if args.lto is None:
-        if is_linux():
-            logging.info("Enabling LTO by default on Linux")
-            args.lto = True
-        else:
-            logging.info("Disabling LTO by default on a non-Linux system")
-            args.lto = False
-
     logging.info("LLVM major version: %d", llvm_major_version)
     logging.info("LTO enabled: %s" % args.lto)
+    logging.info("PGO enabled: %s" % args.pgo)
 
     target_arch_arg = args.target_arch
     target_arch_from_env = os.environ.get('YB_TARGET_ARCH')
