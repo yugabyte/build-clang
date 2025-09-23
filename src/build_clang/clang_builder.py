@@ -59,7 +59,7 @@ class ClangBuilder:
         #
         # If PGO is enabled, then instead:
         # 4b. LTO, PGO-instrumented build using stage 3 compiler, of some targets (clang/lld). These
-        #     are merged with artifacts from stage 3.
+        #     overwrite clang/lld from stage 3.
         # 5. LTO build using stage 4b compiler, of some targets (clang/lld). The artifacts are
         #    identical to stage 4a artifacts, but this also generates profile data. These are
         #    merged with artifacts from stage 3.
@@ -292,6 +292,8 @@ class ClangBuilder:
 
             self.init_stages()
 
+            # min_stage/max_stage are used primarily for debugging build code -- to allow only
+            # rebuilding certain stages rather than all stages.
             if self.args.pgo:
                 max_stage = NUM_NON_LTO_STAGES + 3
             elif self.args.lto:

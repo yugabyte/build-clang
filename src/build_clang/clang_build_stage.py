@@ -327,7 +327,7 @@ class ClangBuildStage:
         if self.pgo_instrumentation:
             # Mostly taken from https://llvm.org/docs/HowToBuildWithPGO.html.
             # LLVM_BUILD_INSTRUMENTED=IR (build with instrumentation).
-            # LLVM_BUILD_RUNTIME=No (skip projects that have problems with profiling, which aren't
+            # LLVM_BUILD_RUNTIME=No (skip projects that have problems with profiling, which
             #     we don't care about anyways).
             # LLVM_VP_COUNTERS_PER_SITE=1024 to help address running out of counters warnings
             #     (though we seem to still get them... but the binaries are measurably faster).
@@ -454,9 +454,9 @@ class ClangBuildStage:
                     # Stage 3 (final non-LTO) builds everything and installs directly into
                     # final_install_dir (self.install_prefix for Stage 3 is final_install_dir).
                     #
-                    # Stage 4 and on (LTO) only builds clang/lld targets, but using those depends
-                    # on some of the other libraries that only Stage 3 built.
-                    # Stage 5/6 depend on functional stage 4/5 clang/lld, and we want to ultimately
+                    # Stage 4 and above (LTO stages) only builds clang/lld targets, but using those 
+                    # depends on some of the other libraries that only Stage 3 built.
+                    # Stage 5/6 depend on a working stage 4/5 clang/lld, and we want to ultimately
                     # package a toolchain with clang/lld targets from the final LTO stage.
                     if self.is_last_stage:
                         # If this is the final LTO stage, then we copy bin/ (Stage n) =>
