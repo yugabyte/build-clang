@@ -69,7 +69,7 @@ class ClangBuilder:
             last_non_lto_stage = (stage_number == NUM_NON_LTO_STAGES)
             self.stages.append(ClangBuildStage(
                 build_conf=self.build_conf,
-                stage_number=NUM_NON_LTO_STAGES + 1,
+                stage_number=stage_number,
                 prev_stage=self.last_stage(),
                 is_last_stage=last_non_lto_stage,
                 is_last_non_lto_stage=last_non_lto_stage,
