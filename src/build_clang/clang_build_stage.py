@@ -60,15 +60,15 @@ class ClangBuildStage:
     # Whether to instrument this stage to generate PGO profile data.
     pgo_instrumentation: bool
 
-    # Previous stage that was instrumented.
+    # Previous stage that was instrumented and used to generated profile data.
     pgo_instrumented_stage: Optional['ClangBuildStage']
 
     def __init__(
             self,
+            *,
             build_conf: ClangBuildConf,
             stage_number: int,
             prev_stage: Optional['ClangBuildStage'],
-            *,
             is_last_stage: bool = False,
             is_last_non_lto_stage: bool = False,
             lto: bool = False,
@@ -105,6 +105,9 @@ class ClangBuildStage:
         self.pgo_instrumented_stage = pgo_instrumented_stage
 
     def merge_profiled_data(self) -> str:
+        # Profiled builds of clang will generate a bunch of .profraw files in
+        # self.cmake_build_dir/profiles. These need to be merged with llvm-profdata before they can
+        # be passed into the final PGO stage.
         if not self.pgo_instrumentation:
             raise ValueError("Not a PGO instrumentation stage")
         if self.prev_stage is None:
@@ -322,6 +325,12 @@ class ClangBuildStage:
             )
 
         if self.pgo_instrumentation:
+            # Mostly taken from https://llvm.org/docs/HowToBuildWithPGO.html.
+            # LLVM_BUILD_INSTRUMENTED=IR (build with instrumentation).
+            # LLVM_BUILD_RUNTIME=No (skip projects that have problems with profiling, which aren't
+            #     we don't care about anyways).
+            # LLVM_VP_COUNTERS_PER_SITE=1024 to help address running out of counters warnings
+            #     (though we seem to still get them... but the binaries are measurably faster).
             vars.update(
                 LLVM_BUILD_INSTRUMENTED='IR',
                 LLVM_BUILD_RUNTIME=False,
@@ -436,28 +445,41 @@ class ClangBuildStage:
                     lto_binaries = ['clang', 'lld']
                     self.log_info("Building LTO binaries: %s", lto_binaries)
                     self._run_ninja(lto_binaries)
-                    def copy_function(src: str, dest: str) -> None:
+                    def copy_overwrite(src: str, dest: str) -> None:
                         # copy2() does overwrite for normal files, but will throw an error on
                         # symlinks, so we remove first.
                         if os.path.exists(dest):
                             os.remove(dest)
                         shutil.copy2(src, dest, follow_symlinks=False)
+                    # Stage 3 (final non-LTO) builds everything and installs directly into
+                    # final_install_dir (self.install_prefix for Stage 3 is final_install_dir).
+                    #
+                    # Stage 4 and on (LTO) only builds clang/lld targets, but using those depends
+                    # on some of the other libraries that only Stage 3 built.
+                    # Stage 5/6 depend on functional stage 4/5 clang/lld, and we want to ultimately
+                    # package a toolchain with clang/lld targets from the final LTO stage.
                     if self.is_last_stage:
+                        # If this is the final LTO stage, then we copy bin/ (Stage n) =>
+                        # final_install_dir, since that's what we end up packaging.
                         shutil.copytree(
                             os.path.join(self.cmake_build_dir, 'bin'),
                             os.path.join(self.build_conf.get_final_install_dir(), 'bin'),
-                            copy_function=copy_function,
+                            copy_function=copy_overwrite,
                             dirs_exist_ok=True)
                     else:
+                        # Otherwise, we copy final_install_dir (Stage 3) => self.install_prefix
+                        # (stage n), then copy bin/ (Stage n) => self.install_prefix/bin (Stage n),
+                        # giving us a usable toolchain in self.install_prefix (Stage n) for use
+                        # in Stage n + 1.
                         shutil.copytree(
                             self.build_conf.get_final_install_dir(),
                             self.install_prefix,
-                            copy_function=copy_function,
+                            copy_function=copy_overwrite,
                             dirs_exist_ok=True)
                         shutil.copytree(
                             os.path.join(self.cmake_build_dir, 'bin'),
                             os.path.join(self.install_prefix, 'bin'),
-                            copy_function=copy_function,
+                            copy_function=copy_overwrite,
                             dirs_exist_ok=True)
                 else:
                     self._run_ninja()

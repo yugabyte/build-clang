@@ -43,14 +43,35 @@ class ClangBuilder:
     def parse_args(self) -> None:
         self.args, self.build_conf = parse_args()
 
+    def last_stage(self) -> Optional[ClangBuildStage]:
+        return self.stages[-1] if self.stages else None
+
     def init_stages(self) -> None:
+        # Stages:
+        # 1. Initial limited build using system compiler (typically GCC).
+        # 2. Build using stage 1 compiler that also builds things like compiler-rt.
+        # 3. Full (non-LTO) build using stage 2 compiler that uses things like compiler-rt.
+        #    Some artifacts from this build are used even in LTO packages.
+        #
+        # Then, if LTO is enabled (and PGO is not):
+        # 4a. LTO build using stage 3 compiler, of some targets (clang/lld). These artifacts are
+        #     merged with artifacts from stage 3.
+        #
+        # If PGO is enabled, then instead:
+        # 4b. LTO, PGO-instrumented build using stage 3 compiler, of some targets (clang/lld). These
+        #     are merged with artifacts from stage 3.
+        # 5. LTO build using stage 4b compiler, of some targets (clang/lld). The artifacts are
+        #    identical to stage 4a artifacts, but this also generates profile data. These are
+        #    merged with artifacts from stage 3.
+        # 6. Profile-optimized LTO build using stage 5 compiler and profile data from building
+        #    stage 5, of some targets (clang/lld). These are merged with artifacts from stage 3.
         for stage_number in range(1, NUM_NON_LTO_STAGES + 1):
             last_non_lto_stage = (stage_number == NUM_NON_LTO_STAGES)
             self.stages.append(ClangBuildStage(
                 build_conf=self.build_conf,
-                stage_number=stage_number,
-                prev_stage=self.stages[-1] if self.stages else None,
-                is_last_stage=last_non_lto_stage and not self.args.lto,
+                stage_number=NUM_NON_LTO_STAGES + 1,
+                prev_stage=self.last_stage(),
+                is_last_stage=last_non_lto_stage,
                 is_last_non_lto_stage=last_non_lto_stage,
             ))
 
@@ -59,7 +80,7 @@ class ClangBuilder:
                 self.stages.append(ClangBuildStage(
                     build_conf=self.build_conf,
                     stage_number=NUM_NON_LTO_STAGES + 1,
-                    prev_stage=self.stages[-1],
+                    prev_stage=self.last_stage(),
                     is_last_stage=True,
                     lto=True,
                 ))
@@ -68,7 +89,7 @@ class ClangBuilder:
                 self.stages.append(ClangBuildStage(
                     build_conf=self.build_conf,
                     stage_number=NUM_NON_LTO_STAGES + 1,
-                    prev_stage=self.stages[-1],
+                    prev_stage=self.last_stage(),
                     lto=True,
                     pgo_instrumentation=True,
                 ))
@@ -76,14 +97,14 @@ class ClangBuilder:
                 self.stages.append(ClangBuildStage(
                     build_conf=self.build_conf,
                     stage_number=NUM_NON_LTO_STAGES + 2,
-                    prev_stage=self.stages[-1],
+                    prev_stage=self.last_stage(),
                     lto=True,
                 ))
                 # PGO stage.
                 self.stages.append(ClangBuildStage(
                     build_conf=self.build_conf,
                     stage_number=NUM_NON_LTO_STAGES + 3,
-                    prev_stage=self.stages[-1],
+                    prev_stage=self.last_stage(),
                     is_last_stage=True,
                     lto=True,
                     pgo_instrumented_stage=self.stages[-2],
@@ -271,11 +292,13 @@ class ClangBuilder:
 
             self.init_stages()
 
-            effective_max_stage = self.args.max_stage
             if self.args.pgo:
-                effective_max_stage = NUM_NON_LTO_STAGES + 3
+                max_stage = NUM_NON_LTO_STAGES + 3
             elif self.args.lto:
-                effective_max_stage = NUM_NON_LTO_STAGES + 1
+                max_stage = NUM_NON_LTO_STAGES + 1
+            else:
+                max_stage = NUM_NON_LTO_STAGES
+            effective_max_stage = min(self.args.max_stage, max_stage)
 
             if self.args.skip_build:
                 logging.info("Skipping building any stages, --skip_build specified")
