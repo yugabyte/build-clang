@@ -153,6 +153,8 @@ class ClangBuildStage:
         if self.is_last_non_lto_stage and not self.lto:
             # We only need to build these tools at the last stage.
             enabled_projects.append('clang-tools-extra')
+            if llvm_major_version >= 14:
+                enabled_projects.append('bolt')
             if (llvm_major_version >= 10 and
                     not (llvm_major_version >= 13 and is_macos())):
                 # There were some issues building lldb for LLVM 9 and older.
