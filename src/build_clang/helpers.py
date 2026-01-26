@@ -187,7 +187,7 @@ def base36timestamp(max_len: int = 7) -> str:
 
 
 def get_rpath_flag(rpath_dir: str) -> str:
-    return f'-Wl,-rpath={rpath_dir}'
+    return f'-Wl,-rpath,{rpath_dir}'
 
 
 def to_cmake_option(v: Union[bool, str]) -> str:

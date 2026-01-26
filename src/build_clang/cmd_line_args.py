@@ -82,12 +82,12 @@ def create_arg_parser() -> argparse.ArgumentParser:
         '--lto',
         action='store_true',
         default=None,
-        help='Use link-time optimization for the final stages of the build (default on Linux)')
+        help='Use link-time optimization for the final stages of the build (default)')
     parser.add_argument(
         '--no_lto',
         dest='lto',
         action='store_false',
-        help='The opposite of --lto (LTO is disabled by default on macOS)')
+        help='The opposite of --lto')
     parser.add_argument(
         '--pgo',
         action='store_true',
@@ -158,12 +158,8 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
     max_allowed_stage = NUM_NON_LTO_STAGES + (3 if args.pgo else 1 if args.lto else 0)
 
     if args.lto is None:
-        if is_linux():
-            logging.info("Enabling LTO by default on Linux")
-            args.lto = True
-        else:
-            logging.info("Disabling LTO by default on a non-Linux system")
-            args.lto = False
+        logging.info("Enabling LTO by default")
+        args.lto = True
 
     if args.pgo is None:
         if args.lto:
