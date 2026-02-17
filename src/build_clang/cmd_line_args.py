@@ -155,8 +155,6 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
     parser = create_arg_parser()
     args = parser.parse_args()
 
-    max_allowed_stage = NUM_NON_LTO_STAGES + (3 if args.pgo else 1 if args.lto else 0)
-
     if args.lto is None:
         logging.info("Enabling LTO by default")
         args.lto = True
@@ -168,6 +166,8 @@ def parse_args() -> Tuple[argparse.Namespace, ClangBuildConf]:
         else:
             logging.info("Disabling PGO by default on LTO-disabled builds")
             args.pgo = False
+
+    max_allowed_stage = NUM_NON_LTO_STAGES + (3 if args.pgo else 1 if args.lto else 0)
 
     if args.pgo and not args.lto:
         raise ValueError("PGO build requires LTO enabled")
