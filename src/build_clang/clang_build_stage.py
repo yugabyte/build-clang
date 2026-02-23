@@ -268,6 +268,18 @@ class ClangBuildStage:
                         os.path.join(self.prev_stage.install_prefix, os_specific_lib_dir)
                     ))
 
+            if self.stage_number >= 2 and is_macos():
+                # Without this, we seem to be calling system ld instead.
+                extra_linker_flags.append(f'--ld-path={self.prev_stage.install_prefix}/bin/ld64.lld')
+            if self.stage_number >= 3 and is_macos():
+                extra_rpath_flags.append(get_rpath_flag(rf'@executable_path/../lib'))
+                extra_rpath_flags.append(get_rpath_flag(
+                    os.path.join(self.install_prefix, 'lib')
+                ))
+                extra_rpath_flags.append(get_rpath_flag(
+                    os.path.join(self.prev_stage.install_prefix, 'lib')
+                ))
+
             extra_linker_flags.extend(extra_rpath_flags)
             extra_linker_flags_str = ' '.join(extra_linker_flags)
             vars.update(
@@ -307,6 +319,12 @@ class ClangBuildStage:
                 # even though we build it for the second stage as well.
                 CLANG_DEFAULT_RTLIB='compiler-rt',
             )
+            if is_macos():
+                vars['CMAKE_LIBTOOL'] = os.path.join(self.prev_stage.install_prefix, 'bin', 'llvm-libtool-darwin')
+        if is_macos() and self.stage_number >= 4:
+            # Unlike linux builds, we can't just pick a instance with tons of memory, and two parallel
+            # LTO links seems to come close to memory limits.
+           vars['LLVM_PARALLEL_LINK_JOBS'] = '2'
 
         if self.build_conf.use_compiler_wrapper:
             vars.update(get_cmake_args_for_compiler_wrapper())
@@ -503,7 +521,9 @@ class ClangBuildStage:
                             self.log_info("Copying file %s to %s", src_path, dst_path)
                             shutil.copyfile(src_path, dst_path)
 
-                validate_build_output_arch(self.build_conf.target_arch, self.install_prefix)
+                validate_build_output_arch(
+                    self.build_conf.target_arch,
+                    self.build_conf.get_final_install_dir() if self.is_last_stage else self.install_prefix)
 
     def check_dynamic_libraries(self) -> None:
         for root, dirs, files in os.walk(self.install_prefix):
