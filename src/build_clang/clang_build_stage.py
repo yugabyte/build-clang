@@ -299,6 +299,16 @@ class ClangBuildStage:
                 # We only need tests at the last stage because that's where we build clangd-indexer.
                 vars['LLVM_BUILD_TESTS'] = True
 
+            if self.should_build_openmp():
+                # LLVM 22+ currently has an issue where libomptest.so fails to link properly,
+                # because it mixes host and target libraries. For us, this means attempting to
+                # link to system C++ (libstdc++ on Linux), but also expecting _Unwind_Resume from
+                # libunwind, and failing with:
+                #   ld.lld: error: undefined symbol: _Unwind_Resume
+                # so disabling build of it.
+                # LLVM issue: https://github.com/llvm/llvm-project/issues/181599
+                vars['OPENMP_ENABLE_OMPT_TOOLS'] = False
+
             if self.lto:
                 vars.update(LLVM_ENABLE_LTO='Full')
                 vars.update(BUILD_SHARED_LIBS=False)
