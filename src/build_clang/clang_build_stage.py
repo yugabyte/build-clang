@@ -313,6 +313,17 @@ class ClangBuildStage:
                 vars.update(LLVM_ENABLE_LTO='Full')
                 vars.update(BUILD_SHARED_LIBS=False)
 
+        extra_linker_flags.append('-D_LIBUNWIND_NO_HEAP')
+
+        # Enable the workaround already present in libunwind's CMakeLists.txt for old
+        # versions of CMake and AIX operating system, that ended up being necessary in our
+        # case too. Without this, libunwind's .S files are not being compiled, resulting
+        # in the missing symbol __unw_getcontext.
+        vars['YB_LIBUNWIND_FORCE_ASM_AS_C'] = True
+
+        if is_macos():
+            extra_cmake_args.append('-DLIBUNWIND_ENABLE_ASSERTIONS=OFF')
+
         # =========================================================================================
         # Stage 3 (non-LTO) and 4 (LTO)
         # =========================================================================================
