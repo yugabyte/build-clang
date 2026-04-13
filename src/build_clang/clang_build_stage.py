@@ -313,9 +313,9 @@ class ClangBuildStage:
                 vars.update(LLVM_ENABLE_LTO='Full')
                 vars.update(BUILD_SHARED_LIBS=False)
 
-        extra_linker_flags.append('-D_LIBUNWIND_NO_HEAP')
+        vars['LIBUNWIND_ADDITIONAL_COMPILE_FLAGS'] = '-D_LIBUNWIND_NO_HEAP'
         if is_macos():
-            extra_cmake_args.append('-DLIBUNWIND_ENABLE_ASSERTIONS=OFF')
+            vars['LIBUNWIND_ENABLE_ASSERTIONS'] = False
 
         # =========================================================================================
         # Stage 3 (non-LTO) and 4 (LTO)
